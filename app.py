@@ -1014,7 +1014,7 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime):
     now_ist = now_utc + timedelta(hours=5, minutes=30)
 
     # Only perform rollover at or after 09:40 IST
-    if now_ist.time() < dtime(9, 40):
+    if now_ist.time() < dtime(11, 26):
         print(f"[ROLLOVER] Now IST={now_ist.time()} < 09:40 -> skipping rollover.")
         return None
 
@@ -1252,6 +1252,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
