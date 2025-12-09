@@ -777,8 +777,7 @@ def place_order_with_checks(
         print("[LIQUIDITY] Not sufficient, waiting 5 seconds then re-check...")
         time.sleep(5)
         ok2, info2 = check_liquidity(security_id, qty)
-        ...
-
+        
         print("[LIQUIDITY] Second check:", info2)
         if not ok2:
             print("[LIQUIDITY] Still poor -> NOT placing order.")
@@ -1187,6 +1186,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
