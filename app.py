@@ -764,8 +764,7 @@ def place_order_with_checks(
     print(f"[LIQUIDITY] Checking {side} {qty} on {security_id}...")
     ok, info = check_liquidity(security_id, qty)
     print("[LIQUIDITY] First check:", info)
-
-        if not ok:
+    if not ok:
         # If there was literally no valid bid/ask, don't waste time re-checking
         if info.get("reason") in ("invalid_bid_or_ask", "missing_bid_or_ask"):
             print("[LIQUIDITY] Invalid or missing bid/ask -> NOT placing order (no retry).")
@@ -1188,6 +1187,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
