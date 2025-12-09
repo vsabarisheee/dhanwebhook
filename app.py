@@ -595,7 +595,7 @@ def check_margin(security_id: str, transaction_type: str, qty: int, price: float
         "exchangeSegment": "NSE_FNO",
         "transactionType": transaction_type,
         "quantity": int(qty),
-        "productType": "PRODUCT_TYPE",
+        "productType": PRODUCT_TYPE,
         "securityId": str(security_id),
         "price": float(price),
         "triggerPrice": 0.0,
@@ -645,7 +645,7 @@ def _post_order(side: str, security_id: str, qty: int, correlation_id: str = Non
         "correlationId": correlation_id,
         "transactionType": side,
         "exchangeSegment": "NSE_FNO",
-        "productType": "PRODUCT_TYPE",
+        "productType": PRODUCT_TYPE,
         "orderType": "MARKET",
         "validity": "DAY",
         "securityId": str(security_id),
@@ -1170,6 +1170,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
