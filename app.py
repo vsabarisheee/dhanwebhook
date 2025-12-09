@@ -482,7 +482,7 @@ def get_top_of_book_from_depth(security_id: str):
 
     try:
         ws = websocket.create_connection(url, timeout=3)
-        ws.settimeout(3.0)  # <-- add this: max 1 sec wait per recv
+        ws.settimeout(3.0)  # <-- add this: max 3 sec wait per recv
         
         # Subscribe to this one F&O instrument
         sub_msg = {
@@ -497,7 +497,7 @@ def get_top_of_book_from_depth(security_id: str):
         }
         ws.send(json.dumps(sub_msg))
 
-        deadline = time.time() + 5.0  # wait up to 2 sec for data
+        deadline = time.time() + 5.0  # wait up to 5 sec for data
 
         while time.time() < deadline and (best_bid is None or best_ask is None):
             try:
@@ -1003,7 +1003,7 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime):
     open synthetic long, roll it to next-month.
 
     Time rule (your requirement):
-      - Only perform rollover at or after 09:40 AM IST.
+      - Only perform rollover at or after 11:26 AM IST.
 
     Steps:
       1) EXIT current expiry synthetic first
@@ -1013,9 +1013,9 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime):
     # Convert UTC to IST (UTC + 5:30)
     now_ist = now_utc + timedelta(hours=5, minutes=30)
 
-    # Only perform rollover at or after 09:40 IST
+    # Only perform rollover at or after 11:26 IST
     if now_ist.time() < dtime(11, 26):
-        print(f"[ROLLOVER] Now IST={now_ist.time()} < 09:40 -> skipping rollover.")
+        print(f"[ROLLOVER] Now IST={now_ist.time()} < 11:26 -> skipping rollover.")
         return None
 
     near, next_c = get_near_and_next_contract(today)
@@ -1088,7 +1088,7 @@ def tv_webhook():
         "signal": "CHECK",
         "underlying": "NIFTY"
       }
-    for daily 09:40 IST rollover checks.
+    for daily 11:26 IST rollover checks.
     """
     data = request.get_json() or {}
     print("[TV] Received payload:", data)
@@ -1252,6 +1252,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
