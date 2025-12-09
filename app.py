@@ -6,6 +6,7 @@ import json
 import struct
 from datetime import date, datetime
 import csv
+import math
 from websocket import WebSocketTimeoutException
 
 
@@ -257,7 +258,7 @@ def pick_atm_for_expiry(expiry: date):
         spot = None
 
     # 2) Collect all strikes for this expiry
-    strikes = set()
+        strikes = set()
     for r in rows:
         sp = get_field(r, "STRIKE_PRICE", "STRIKE")
         if not sp:
@@ -270,15 +271,54 @@ def pick_atm_for_expiry(expiry: date):
     if not strikes:
         raise RuntimeError(f"No strikes found for expiry {expiry}.")
 
+    # All listed strikes for this expiry
     strikes = sorted(s for s in strikes if s > 0)
 
     if spot and spot > 0:
-        atm_strike = min(strikes, key=lambda s: abs(s - spot))
+        # -----------------------------------------
+        # RULE:
+        #   1) Work with 100-point strikes only (X00).
+        #   2) Use 50 as mid-point:
+        #        spot in [X00, X50]  -> X00
+        #        spot in (X50, X100) -> (X+1)00
+        #   3) From actual listed strikes, choose the
+        #      100-multiple closest to that target.
+        # -----------------------------------------
+
+        # 100-multiple strikes actually listed (e.g. 25800, 25900, ...)
+        hundred_strikes = [s for s in strikes if s % 100 == 0]
+
+        if not hundred_strikes:
+            # Fallback: no pure 100-steps listed, use closest overall
+            atm_strike = min(strikes, key=lambda s: abs(s - spot))
+            print(
+                f"[ATM] No 100-point strikes listed; using closest strike {atm_strike} to spot {spot}"
+            )
+        else:
+            base = math.floor(spot / 100.0) * 100.0
+            diff = spot - base
+
+            if diff <= 50:
+                target = base          # lower 100's strike
+            else:
+                target = base + 100.0  # upper 100's strike
+
+            # Among listed 100-strikes, choose one closest to target
+            atm_strike = min(hundred_strikes, key=lambda s: abs(s - target))
+
+            print(
+                f"[ATM] Spot={spot}, base={base}, diff={diff} -> "
+                f"target 100-strike={target}, chosen listed 100-strike={atm_strike}"
+            )
     else:
-        # fallback: use middle strike
+        # fallback: use middle strike (if spot not available)
         atm_strike = strikes[len(strikes) // 2]
+        print(
+            f"[ATM] Spot unavailable, using middle strike {atm_strike} for expiry {expiry}"
+        )
 
     print(f"[ATM] Chosen ATM strike {atm_strike} for expiry {expiry}")
+
 
     # 3) Find CE / PE security IDs for this strike
     call_sid = None
@@ -1186,6 +1226,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
