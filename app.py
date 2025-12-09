@@ -211,7 +211,11 @@ def pick_atm_for_expiry(expiry: date):
     """
     For a given expiry, use Option Chain API to:
       1) Fetch NIFTY spot (last_price / underlyingValue / ltp)
-      2) Find strike closest to spot from NIFTY_OPTION_METADATA
+      2) Find strike based on your rule:
+         - Only use 100-point strikes (X00)
+         - Use 50 as mid:
+             spot in [X00, X50]  -> X00
+             spot in (X50, X100) -> (X+1)00
       3) Return (atm_strike, call_sid, put_sid)
     """
     load_nifty_option_metadata()
@@ -225,7 +229,7 @@ def pick_atm_for_expiry(expiry: date):
     if NIFTY_UNDERLYING_SECURITY_ID is None:
         raise RuntimeError("NIFTY_UNDERLYING_SECURITY_ID is not set.")
 
-    # 1) Call Option Chain for this expiry
+    # 1) Call Option Chain for this expiry to get spot
     payload = {
         "UnderlyingScrip": int(NIFTY_UNDERLYING_SECURITY_ID),
         "UnderlyingSeg": NIFTY_UNDERLYING_SEG,
@@ -245,7 +249,6 @@ def pick_atm_for_expiry(expiry: date):
         else:
             j = resp.json()
             data = j.get("data") or {}
-            # Try a few possible keys for spot / underlying price
             spot = float(
                 (data.get("last_price")
                  or data.get("underlyingValue")
@@ -258,7 +261,7 @@ def pick_atm_for_expiry(expiry: date):
         spot = None
 
     # 2) Collect all strikes for this expiry
-        strikes = set()
+    strikes = set()
     for r in rows:
         sp = get_field(r, "STRIKE_PRICE", "STRIKE")
         if not sp:
@@ -271,21 +274,11 @@ def pick_atm_for_expiry(expiry: date):
     if not strikes:
         raise RuntimeError(f"No strikes found for expiry {expiry}.")
 
-    # All listed strikes for this expiry
     strikes = sorted(s for s in strikes if s > 0)
 
+    # 3) Apply your "nearest 100's strike" rule
     if spot and spot > 0:
-        # -----------------------------------------
-        # RULE:
-        #   1) Work with 100-point strikes only (X00).
-        #   2) Use 50 as mid-point:
-        #        spot in [X00, X50]  -> X00
-        #        spot in (X50, X100) -> (X+1)00
-        #   3) From actual listed strikes, choose the
-        #      100-multiple closest to that target.
-        # -----------------------------------------
-
-        # 100-multiple strikes actually listed (e.g. 25800, 25900, ...)
+        # 100-multiple strikes actually listed (e.g. 25800, 25900, 26000, ...)
         hundred_strikes = [s for s in strikes if s % 100 == 0]
 
         if not hundred_strikes:
@@ -311,7 +304,7 @@ def pick_atm_for_expiry(expiry: date):
                 f"target 100-strike={target}, chosen listed 100-strike={atm_strike}"
             )
     else:
-        # fallback: use middle strike (if spot not available)
+        # fallback: spot unavailable → use middle strike
         atm_strike = strikes[len(strikes) // 2]
         print(
             f"[ATM] Spot unavailable, using middle strike {atm_strike} for expiry {expiry}"
@@ -319,8 +312,7 @@ def pick_atm_for_expiry(expiry: date):
 
     print(f"[ATM] Chosen ATM strike {atm_strike} for expiry {expiry}")
 
-
-    # 3) Find CE / PE security IDs for this strike
+    # 4) Find CE / PE security IDs for this strike
     call_sid = None
     put_sid = None
 
@@ -341,7 +333,6 @@ def pick_atm_for_expiry(expiry: date):
         if not sec_id:
             continue
 
-        sid_str = None
         try:
             sid_str = str(int(float(sec_id)))
         except Exception:
@@ -362,6 +353,7 @@ def pick_atm_for_expiry(expiry: date):
     )
 
     return float(atm_strike), call_sid, put_sid
+
 
 
 def ensure_contract_populated(contract: dict):
@@ -1226,6 +1218,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
