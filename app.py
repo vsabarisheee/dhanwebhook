@@ -4,12 +4,10 @@ import os
 import time
 import json
 import struct
-from datetime import date, datetime
+from datetime import date, datetime, time as dtime, timedelta
 import csv
 import math
 from websocket import WebSocketTimeoutException
-
-
 import websocket  # for Full Market Depth WS
 
 app = Flask(__name__)
@@ -999,15 +997,27 @@ def exit_synthetic_long(contract, qty: int):
     }
 
 
-def rollover_synthetic_if_needed(today: date):
+def rollover_synthetic_if_needed(today: date, now_utc: datetime):
     """
     If today is expiry of near-month synthetic contract and there is an
     open synthetic long, roll it to next-month.
 
-    1) EXIT current expiry synthetic first
-    2) Then ENTER new synthetic in next expiry
-    (each multi-leg step itself obeys BUY-first-then-SELL)
+    Time rule (your requirement):
+      - Only perform rollover at or after 09:40 AM IST.
+
+    Steps:
+      1) EXIT current expiry synthetic first
+      2) Then ENTER new synthetic in next expiry
+      (each multi-leg step itself obeys BUY-first-then-SELL)
     """
+    # Convert UTC to IST (UTC + 5:30)
+    now_ist = now_utc + timedelta(hours=5, minutes=30)
+
+    # Only perform rollover at or after 09:40 IST
+    if now_ist.time() < dtime(9, 40):
+        print(f"[ROLLOVER] Now IST={now_ist.time()} < 09:40 -> skipping rollover.")
+        return None
+
     near, next_c = get_near_and_next_contract(today)
     if near is None or next_c is None:
         return None
@@ -1056,6 +1066,7 @@ def rollover_synthetic_if_needed(today: date):
     }
 
 
+
 # --------------------------------------------------
 # FLASK ROUTES
 # --------------------------------------------------
@@ -1071,6 +1082,13 @@ def tv_webhook():
         "underlying": "NIFTY",
         "qty": 75
       }
+
+    Also supports:
+      {
+        "signal": "CHECK",
+        "underlying": "NIFTY"
+      }
+    for daily 09:40 IST rollover checks.
     """
     data = request.get_json() or {}
     print("[TV] Received payload:", data)
@@ -1078,7 +1096,10 @@ def tv_webhook():
     raw_signal = str(data.get("signal", "")).upper()
     qty = int(data.get("qty", 75))
     underlying = str(data.get("underlying", "NIFTY")).upper()
-    today = date.today()
+
+    # current UTC time + date (for IST conversion and expiry logic)
+    now_utc = datetime.utcnow()
+    today = now_utc.date()
 
     if underlying != "NIFTY":
         return (
@@ -1086,8 +1107,20 @@ def tv_webhook():
             400,
         )
 
-    # On ANY signal day, first check if rollover is needed
-    rollover_info = rollover_synthetic_if_needed(today)
+    # On ANY signal day, first check if rollover is needed (time-based inside)
+    rollover_info = rollover_synthetic_if_needed(today, now_utc)
+
+    # ---- MAINTENANCE: CHECK signal (from scheduled TV alert) ----
+    if raw_signal == "CHECK":
+        # Only do rollover; do not place any new trades
+        return jsonify(
+            {
+                "status": "ok",
+                "mode": "LIVE" if LIVE else "PAPER",
+                "action": "CHECK",
+                "rollover": rollover_info,
+            }
+        ), 200
 
     # ---- NEW ENTRY: long synthetic ----
     if raw_signal == "BUY":
@@ -1098,6 +1131,7 @@ def tv_webhook():
                     {
                         "status": "error",
                         "reason": "No NIFTY synthetic contracts available (metadata not loaded?)",
+                        "rollover": rollover_info,
                     }
                 ),
                 500,
@@ -1218,6 +1252,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
