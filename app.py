@@ -16,7 +16,9 @@ app = Flask(__name__)
 # --------------------------------------------------
 
 # From your environment (Render "Environment" section)
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID") or os.getenv("DHAN_API_KEY")
+# Must be your numeric Dhan client id (e.g. 1101700964), NOT the API key
+DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+DHAN_API_KEY = os.getenv("DHAN_API_KEY")  # keep separate if you need it later
 DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
 
 # Dhan v2 base URL
@@ -1157,5 +1159,6 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
