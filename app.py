@@ -29,7 +29,7 @@ LIVE = False  # <-- set to True when you're 100% ready
 MARGIN_CHECK_ENABLED = True
 
 # Liquidity rules
-MAX_SPREAD_POINTS = 5.0   # max allowed (ask - bid)
+MAX_SPREAD_POINTS = 15.0   # max allowed (ask - bid)
 MIN_QTY_MULTIPLIER = 1.0  # both bid/ask qty should be >= qty * this
 
 # Order polling settings for "ensure filled" logic
@@ -1157,3 +1157,4 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
