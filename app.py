@@ -6,6 +6,8 @@ import json
 import struct
 from datetime import date, datetime
 import csv
+from websocket import WebSocketTimeoutException
+
 
 import websocket  # for Full Market Depth WS
 
@@ -450,7 +452,8 @@ def get_top_of_book_from_depth(security_id: str):
 
     try:
         ws = websocket.create_connection(url, timeout=3)
-
+        ws.settimeout(1.0)  # <-- add this: max 1 sec wait per recv
+        
         # Subscribe to this one F&O instrument
         sub_msg = {
             "RequestCode": 23,  # Full Market Depth (20-level)
@@ -467,7 +470,11 @@ def get_top_of_book_from_depth(security_id: str):
         deadline = time.time() + 2.0  # wait up to 2 sec for data
 
         while time.time() < deadline and (best_bid is None or best_ask is None):
-            frame = ws.recv()
+            try:
+                frame = ws.recv()
+            except WebSocketTimeoutException:
+                print("[DEPTH] recv timeout, no data for this SID")
+                break            
             if isinstance(frame, str):
                 # Ignore any text frames
                 continue
@@ -758,10 +765,21 @@ def place_order_with_checks(
     ok, info = check_liquidity(security_id, qty)
     print("[LIQUIDITY] First check:", info)
 
-    if not ok:
+        if not ok:
+        # If there was literally no valid bid/ask, don't waste time re-checking
+        if info.get("reason") in ("invalid_bid_or_ask", "missing_bid_or_ask"):
+            print("[LIQUIDITY] Invalid or missing bid/ask -> NOT placing order (no retry).")
+            return {
+                "placed": False,
+                "liquidity_ok": False,
+                "liquidity_info": info,
+            }
+
         print("[LIQUIDITY] Not sufficient, waiting 5 seconds then re-check...")
         time.sleep(5)
         ok2, info2 = check_liquidity(security_id, qty)
+        ...
+
         print("[LIQUIDITY] Second check:", info2)
         if not ok2:
             print("[LIQUIDITY] Still poor -> NOT placing order.")
@@ -1170,6 +1188,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
