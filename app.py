@@ -26,7 +26,7 @@ DHAN_BASE_URL = "https://api.dhan.co/v2"
 LIVE = False  # <-- set to True when you're 100% ready
 
 # Turn on/off margin pre-check via /margincalculator
-MARGIN_CHECK_ENABLED = True
+MARGIN_CHECK_ENABLED = False
 
 # Liquidity rules
 MAX_SPREAD_POINTS = 15.0   # max allowed (ask - bid)
@@ -1157,4 +1157,5 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
