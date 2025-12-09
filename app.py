@@ -30,6 +30,11 @@ LIVE = False  # <-- set to True when you're 100% ready
 # Turn on/off margin pre-check via /margincalculator
 MARGIN_CHECK_ENABLED = False
 
+# Product type:
+#   "INTRADAY" -> intraday trades only
+#   "CNC"      -> positional / carry forward for F&O
+PRODUCT_TYPE = "CNC"   # you want positional
+
 # Liquidity rules
 MAX_SPREAD_POINTS = 15.0   # max allowed (ask - bid)
 MIN_QTY_MULTIPLIER = 1.0  # both bid/ask qty should be >= qty * this
@@ -584,7 +589,7 @@ def check_margin(security_id: str, transaction_type: str, qty: int, price: float
         "exchangeSegment": "NSE_FNO",
         "transactionType": transaction_type,
         "quantity": int(qty),
-        "productType": "INTRADAY",
+        "productType": "PRODUCT_TYPE",
         "securityId": str(security_id),
         "price": float(price),
         "triggerPrice": 0.0,
@@ -634,7 +639,7 @@ def _post_order(side: str, security_id: str, qty: int, correlation_id: str = Non
         "correlationId": correlation_id,
         "transactionType": side,
         "exchangeSegment": "NSE_FNO",
-        "productType": "INTRADAY",
+        "productType": "PRODUCT_TYPE",
         "orderType": "MARKET",
         "validity": "DAY",
         "securityId": str(security_id),
@@ -1159,6 +1164,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
