@@ -484,7 +484,7 @@ def get_top_of_book_from_depth(security_id: str):
 
     try:
         ws = websocket.create_connection(url, timeout=3)
-        ws.settimeout(1.0)  # <-- add this: max 1 sec wait per recv
+        ws.settimeout(3.0)  # <-- add this: max 1 sec wait per recv
         
         # Subscribe to this one F&O instrument
         sub_msg = {
@@ -499,7 +499,7 @@ def get_top_of_book_from_depth(security_id: str):
         }
         ws.send(json.dumps(sub_msg))
 
-        deadline = time.time() + 2.0  # wait up to 2 sec for data
+        deadline = time.time() + 5.0  # wait up to 2 sec for data
 
         while time.time() < deadline and (best_bid is None or best_ask is None):
             try:
@@ -1218,6 +1218,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
