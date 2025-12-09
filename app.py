@@ -51,7 +51,10 @@ NIFTY_SYNTH_CONTRACTS = []  # will be filled dynamically
 NIFTY_UNDERLYING_SYMBOL = "NIFTY"
 NIFTY_UNDERLYING_SEG = "IDX_I"  # as per Option Chain docs
 
-NIFTY_UNDERLYING_SECURITY_ID = None  # will come from instrument master
+# For Nifty 50 index, Option Chain docs use Security ID 13 as example.
+# We'll use 13 as the underlying SecurityId for NIFTY.
+NIFTY_UNDERLYING_SECURITY_ID = 13
+
 NIFTY_OPTION_METADATA = {}  # expiry_date (date) -> list of rows (dicts) for that expiry
 
 # Simple cache for Dhan postback info (in-memory)
@@ -173,10 +176,13 @@ def load_nifty_option_metadata():
 
         NIFTY_OPTION_METADATA = meta
 
-        # Pick one underlying security id (they should all be same)
-        if underlying_ids:
+                # If not already set, derive underlying security id from option rows.
+        # But for NIFTY index we usually hardcode 13, so don't override if already set.
+        if underlying_ids and NIFTY_UNDERLYING_SECURITY_ID is None:
             NIFTY_UNDERLYING_SECURITY_ID = sorted(underlying_ids)[0]
-            print(f"[INIT] NIFTY UNDERLYING_SECURITY_ID={NIFTY_UNDERLYING_SECURITY_ID}")
+
+        print(f"[INIT] NIFTY UNDERLYING_SECURITY_ID={NIFTY_UNDERLYING_SECURITY_ID}")
+
 
         # Create shell contracts (expiry only, strike & SIDs later)
         contracts = []
@@ -1164,6 +1170,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
