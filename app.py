@@ -697,45 +697,48 @@ def _post_order(side: str, security_id: str, qty: int, t0: float, correlation_id
         "boStopLossValue": 0.0,
     }
 
-   if not LIVE:
-    print(f"[PAPER ORDER] Would {side} {qty} of {security_id} payload={payload}")
-    return 200, {"orderId": "PAPER", "orderStatus": "PAPER"}
+    # ---------------- PAPER MODE ----------------
+    if not LIVE:
+        print(f"[PAPER ORDER] Would {side} {qty} of {security_id} payload={payload}")
+        return 200, {"orderId": "PAPER", "orderStatus": "PAPER"}
 
-print(f"[LIVE ORDER] {side} {qty} of {security_id} payload={payload}")
+    # ---------------- LIVE MODE ----------------
+    print(f"[LIVE ORDER] {side} {qty} of {security_id} payload={payload}")
 
-# ---- LATENCY: before Dhan API call ----
-t1 = time.time()
-print(
-    "[LATENCY] Before Dhan API call:",
-    datetime.utcnow(), "UTC",
-    "Backend time:",
-    round((t1 - t0) * 1000, 2), "ms"
-)
+    # ---- LATENCY: before Dhan API call ----
+    t1 = time.time()
+    print(
+        "[LATENCY] Before Dhan API call:",
+        datetime.utcnow(), "UTC",
+        "Backend time:",
+        round((t1 - t0) * 1000, 2), "ms"
+    )
 
-resp = requests.post(
-    f"{DHAN_BASE_URL}/orders",
-    headers=dhan_headers_json(),
-    json=payload,
-    timeout=3,
-)
+    resp = requests.post(
+        f"{DHAN_BASE_URL}/orders",
+        headers=dhan_headers_json(),
+        json=payload,
+        timeout=3,
+    )
 
-# ---- LATENCY: after Dhan API response ----
-t2 = time.time()
-print(
-    "[LATENCY] After Dhan API response:",
-    datetime.utcnow(), "UTC",
-    "Dhan API time:",
-    round((t2 - t1) * 1000, 2), "ms",
-    "Total latency:",
-    round((t2 - t0) * 1000, 2), "ms"
-)
+    # ---- LATENCY: after Dhan API response ----
+    t2 = time.time()
+    print(
+        "[LATENCY] After Dhan API response:",
+        datetime.utcnow(), "UTC",
+        "Dhan API time:",
+        round((t2 - t1) * 1000, 2), "ms",
+        "Total latency:",
+        round((t2 - t0) * 1000, 2), "ms"
+    )
 
-try:
-    j = resp.json()
-except Exception:
-    j = resp.text
+    try:
+        j = resp.json()
+    except Exception:
+        j = resp.text
 
-return resp.status_code, j
+    return resp.status_code, j
+
 
 
 
@@ -1289,6 +1292,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
