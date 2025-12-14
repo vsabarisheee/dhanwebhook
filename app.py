@@ -667,7 +667,7 @@ def check_margin(security_id: str, transaction_type: str, qty: int, price: float
 # ORDERS (v2) – place / get / wait for fill
 # --------------------------------------------------
 
-def _post_order(side: str, security_id: str, qty: int, correlation_id: str = None):
+def _post_order(side: str, security_id: str, qty: int, t0: float, correlation_id: str = None):
     """
     Low-level POST /orders.
     Returns (status_code, response_json_or_text)
@@ -697,12 +697,11 @@ def _post_order(side: str, security_id: str, qty: int, correlation_id: str = Non
         "boStopLossValue": 0.0,
     }
 
-    if not LIVE:
-        print(f"[PAPER ORDER] Would {side} {qty} of {security_id} payload={payload}")
-        # mimic Dhan response
-        return 200, {"orderId": "PAPER", "orderStatus": "PAPER"}
+   if not LIVE:
+    print(f"[PAPER ORDER] Would {side} {qty} of {security_id} payload={payload}")
+    return 200, {"orderId": "PAPER", "orderStatus": "PAPER"}
 
-    print(f"[LIVE ORDER] {side} {qty} of {security_id} payload={payload}")
+print(f"[LIVE ORDER] {side} {qty} of {security_id} payload={payload}")
 
 # ---- LATENCY: before Dhan API call ----
 t1 = time.time()
@@ -731,11 +730,14 @@ print(
     round((t2 - t0) * 1000, 2), "ms"
 )
 
-    try:
-        j = resp.json()
-    except Exception:
-        j = resp.text
-    return resp.status_code, j
+try:
+    j = resp.json()
+except Exception:
+    j = resp.text
+
+return resp.status_code, j
+
+
 
 
 def get_order(order_id: str):
@@ -863,7 +865,7 @@ def place_order_with_checks(
                 "margin_info": margin_info,
             }
 
-    status_code, resp = _post_order(side, security_id, qty)
+    status_code, resp = _post_order(side, security_id, qty, t0)
     order_id = resp.get("orderId") if isinstance(resp, dict) else None
 
     result = {
@@ -1287,6 +1289,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
