@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 import requests
 import os
 import time
+from datetime import datetime
 import json
 import struct
 from datetime import date, datetime, time as dtime, timedelta
@@ -702,12 +703,34 @@ def _post_order(side: str, security_id: str, qty: int, correlation_id: str = Non
         return 200, {"orderId": "PAPER", "orderStatus": "PAPER"}
 
     print(f"[LIVE ORDER] {side} {qty} of {security_id} payload={payload}")
-    resp = requests.post(
-        f"{DHAN_BASE_URL}/orders",
-        headers=dhan_headers_json(),
-        json=payload,
-        timeout=3,
-    )
+
+# ---- LATENCY: before Dhan API call ----
+t1 = time.time()
+print(
+    "[LATENCY] Before Dhan API call:",
+    datetime.utcnow(), "UTC",
+    "Backend time:",
+    round((t1 - t0) * 1000, 2), "ms"
+)
+
+resp = requests.post(
+    f"{DHAN_BASE_URL}/orders",
+    headers=dhan_headers_json(),
+    json=payload,
+    timeout=3,
+)
+
+# ---- LATENCY: after Dhan API response ----
+t2 = time.time()
+print(
+    "[LATENCY] After Dhan API response:",
+    datetime.utcnow(), "UTC",
+    "Dhan API time:",
+    round((t2 - t1) * 1000, 2), "ms",
+    "Total latency:",
+    round((t2 - t0) * 1000, 2), "ms"
+)
+
     try:
         j = resp.json()
     except Exception:
@@ -1073,6 +1096,10 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime):
 
 @app.route("/tv-webhook", methods=["POST"])
 def tv_webhook():
+    # ---- LATENCY START ----
+    t0 = time.time()
+    print("TV webhook received at:", datetime.utcnow(), "UTC")
+    # -----------------------
     """
     TradingView webhook endpoint.
 
@@ -1096,6 +1123,14 @@ def tv_webhook():
     raw_signal = str(data.get("signal", "")).upper()
     qty = int(data.get("qty", 75))
     underlying = str(data.get("underlying", "NIFTY")).upper()
+
+    # ---- TEST MODE GUARD (no real orders) ----
+if data.get("test") is True:
+    return jsonify({
+        "status": "TEST MODE",
+        "message": "Latency measured, no order placed"
+    }), 200
+
 
     # current UTC time + date (for IST conversion and expiry logic)
     now_utc = datetime.utcnow()
@@ -1252,6 +1287,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
