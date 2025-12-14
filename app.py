@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify
 import requests
 import os
 import time
-from datetime import datetime
 import json
 import struct
 from datetime import date, datetime, time as dtime, timedelta
@@ -178,7 +177,7 @@ def load_nifty_option_metadata():
 
         NIFTY_OPTION_METADATA = meta
 
-                # If not already set, derive underlying security id from option rows.
+        # If not already set, derive underlying security id from option rows.
         # But for NIFTY index we usually hardcode 13, so don't override if already set.
         if underlying_ids and NIFTY_UNDERLYING_SECURITY_ID is None:
             NIFTY_UNDERLYING_SECURITY_ID = sorted(underlying_ids)[0]
@@ -809,6 +808,7 @@ def place_order_with_checks(
     side: str,
     security_id: str,
     qty: int,
+    t0: float,
     ensure_fill: bool = False,
 ):
     """
@@ -951,7 +951,7 @@ def get_open_synth_long_any():
     return None
 
 
-def enter_synthetic_long(contract, qty: int):
+def enter_synthetic_long(contract, qty: int, t0: float):
     """
     Long synthetic future = Buy CALL + Sell PUT.
     RULE: ALWAYS execute BUY leg first, and wait for fill.
@@ -966,7 +966,7 @@ def enter_synthetic_long(contract, qty: int):
     )
 
     # 1) BUY CALL – ensure filled
-    buy_call = place_order_with_checks("BUY", call_sid, qty, ensure_fill=True)
+    buy_call = place_order_with_checks("BUY", call_sid, qty, t0, ensure_fill=True)
     if not buy_call.get("placed") or not buy_call.get("filled_completely", False):
         print("[ENTER SYN] BUY CALL failed/not filled -> NOT placing SELL PUT.")
         return {
@@ -976,7 +976,7 @@ def enter_synthetic_long(contract, qty: int):
         }
 
     # 2) SELL PUT
-    sell_put = place_order_with_checks("SELL", put_sid, qty, ensure_fill=False)
+    sell_put = place_order_with_checks("SELL", put_sid, qty, t0, ensure_fill=False)
 
     return {
         "entered": True,
@@ -987,7 +987,7 @@ def enter_synthetic_long(contract, qty: int):
     }
 
 
-def exit_synthetic_long(contract, qty: int):
+def exit_synthetic_long(contract, qty: int, t0: float):
     """
     Exit synthetic long:
       existing = long CALL + short PUT
@@ -1004,7 +1004,7 @@ def exit_synthetic_long(contract, qty: int):
     )
 
     # 1) BUY PUT – ensure filled
-    buy_put = place_order_with_checks("BUY", put_sid, qty, ensure_fill=True)
+    buy_put = place_order_with_checks("BUY", put_sid, qty, t0, ensure_fill=True)
     if not buy_put.get("placed") or not buy_put.get("filled_completely", False):
         print("[EXIT SYN] BUY PUT failed/not filled -> NOT placing SELL CALL.")
         return {
@@ -1014,7 +1014,7 @@ def exit_synthetic_long(contract, qty: int):
         }
 
     # 2) SELL CALL
-    sell_call = place_order_with_checks("SELL", call_sid, qty, ensure_fill=False)
+    sell_call = place_order_with_checks("SELL", call_sid, qty, t0, ensure_fill=False)
 
     return {
         "exited": True,
@@ -1025,7 +1025,8 @@ def exit_synthetic_long(contract, qty: int):
     }
 
 
-def rollover_synthetic_if_needed(today: date, now_utc: datetime):
+def rollover_synthetic_if_needed(today: date, now_utc: datetime, t0: float):
+
     """
     If today is expiry of near-month synthetic contract and there is an
     open synthetic long, roll it to next-month.
@@ -1064,7 +1065,7 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime):
     print(f"[ROLLOVER] Required qty={qty} from {near['name']} to {next_c['name']}")
 
     # 1) EXIT old synthetic first
-    exit_res = exit_synthetic_long(near, qty)
+    exit_res = exit_synthetic_long(near, qty, t0)
     if not exit_res.get("exited"):
         print("[ROLLOVER] Exit old synthetic FAILED -> NOT entering new synthetic.")
         return {
@@ -1074,7 +1075,7 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime):
         }
 
     # 2) ENTER new synthetic after exit
-    enter_res = enter_synthetic_long(next_c, qty)
+    enter_res = enter_synthetic_long(next_c, qty, t0)
     if not enter_res.get("entered"):
         print("[ROLLOVER] Enter new synthetic FAILED AFTER exit.")
         return {
@@ -1130,11 +1131,12 @@ def tv_webhook():
     underlying = str(data.get("underlying", "NIFTY")).upper()
 
     # ---- TEST MODE GUARD (no real orders) ----
-if data.get("test") is True:
-    return jsonify({
-        "status": "TEST MODE",
-        "message": "Latency measured, no order placed"
-    }), 200
+    if data.get("test") is True:
+        return jsonify({
+            "status": "TEST MODE",
+            "message": "Latency measured, no order placed"
+        }), 200
+
 
 
     # current UTC time + date (for IST conversion and expiry logic)
@@ -1148,7 +1150,7 @@ if data.get("test") is True:
         )
 
     # On ANY signal day, first check if rollover is needed (time-based inside)
-    rollover_info = rollover_synthetic_if_needed(today, now_utc)
+    rollover_info = rollover_synthetic_if_needed(today, now_utc, t0)
 
     # ---- MAINTENANCE: CHECK signal (from scheduled TV alert) ----
     if raw_signal == "CHECK":
@@ -1177,7 +1179,7 @@ if data.get("test") is True:
                 500,
             )
 
-        enter_res = enter_synthetic_long(contract, qty)
+        enter_res = enter_synthetic_long(contract, qty, t0)
         ok = enter_res.get("entered", False)
 
         return jsonify(
@@ -1207,7 +1209,7 @@ if data.get("test") is True:
         contract = open_info["contract"]
         pos_qty = open_info["qty"]
 
-        exit_res = exit_synthetic_long(contract, pos_qty)
+        exit_res = exit_synthetic_long(contract, pos_qty, t0)
         ok = exit_res.get("exited", False)
 
         return jsonify(
@@ -1292,6 +1294,7 @@ def home():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
