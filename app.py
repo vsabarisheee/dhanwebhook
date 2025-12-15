@@ -1125,17 +1125,20 @@ def tv_webhook():
     """
     data = request.get_json() or {}
     print("[TV] Received payload:", data)
+    
+    # ---- LATENCY TEST GUARD (no real orders) ----
+    if data.get("latency_test") is True:
+        return jsonify({
+            "status": "LATENCY_TEST_OK",
+            "server_utc": datetime.utcnow().isoformat()
+        }), 200
+
 
     raw_signal = str(data.get("signal", "")).upper()
     qty = int(data.get("qty", 75))
     underlying = str(data.get("underlying", "NIFTY")).upper()
 
-    # ---- TEST MODE GUARD (no real orders) ----
-   if data.get("latency_test") is True:
-       return jsonify({
-            "status": "LATENCY_TEST_OK",
-            "server_utc": datetime.utcnow().isoformat()
-        }), 200
+   
 
 
 
@@ -1297,6 +1300,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
