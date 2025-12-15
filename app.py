@@ -1176,10 +1176,10 @@ def tv_webhook():
     # On ANY signal day, first check if rollover is needed (time-based inside)
     rollover_results = {}
 
-    for sid in list(SYSTEM_POSITIONS.keys()):
-        res = rollover_synthetic_if_needed(today, now_utc, t0)
-        if res:
-            rollover_results[sid] = res
+    res = rollover_synthetic_if_needed(today, now_utc, t0)
+    if res:
+        rollover_results["portfolio"] = res
+
 
 
 
@@ -1340,6 +1340,33 @@ def health_dhan():
 def home():
     return "Dhan webhook server is running – synthetic NIFTY (CALL+PUT) bot (auto ATM, monthly expiry)."
 
+
+@app.route("/admin/reset-system", methods=["POST"])
+def reset_system_position():
+    data = request.get_json() or {}
+    system_id = data.get("system_id")
+
+    if not system_id:
+        return jsonify({
+            "status": "error",
+            "reason": "system_id required"
+        }), 400
+
+    if system_id not in SYSTEM_POSITIONS:
+        return jsonify({
+            "status": "ok",
+            "message": f"{system_id} already flat"
+        }), 200
+
+    # Clear local state
+    del SYSTEM_POSITIONS[system_id]
+
+    print(f"[ADMIN] System state reset for {system_id}")
+
+    return jsonify({
+        "status": "ok",
+        "message": f"System {system_id} reset successfully"
+    }), 200
 
 if __name__ == "__main__":
     import os
