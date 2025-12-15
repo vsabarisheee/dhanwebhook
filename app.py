@@ -1131,11 +1131,12 @@ def tv_webhook():
     underlying = str(data.get("underlying", "NIFTY")).upper()
 
     # ---- TEST MODE GUARD (no real orders) ----
-    if data.get("test") is True:
-        return jsonify({
-            "status": "TEST MODE",
-            "message": "Latency measured, no order placed"
+   if data.get("latency_test") is True:
+       return jsonify({
+            "status": "LATENCY_TEST_OK",
+            "server_utc": datetime.utcnow().isoformat()
         }), 200
+
 
 
 
@@ -1293,7 +1294,11 @@ def home():
 
 
 if __name__ == "__main__":
-    app.run()
+    import os
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+
 
 
 
