@@ -1042,7 +1042,7 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime, t0: float):
     open synthetic long, roll it to next-month.
 
     Time rule (your requirement):
-      - Only perform rollover at or after 11:26 AM IST.
+      - Only perform rollover at or after 12:30 PM IST.
 
     Steps:
       1) EXIT current expiry synthetic first
@@ -1052,9 +1052,9 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime, t0: float):
     # Convert UTC to IST (UTC + 5:30)
     now_ist = now_utc + timedelta(hours=5, minutes=30)
 
-    # Only perform rollover at or after 12:15 IST
-    if now_ist.time() < dtime(11, 20):
-        print(f"[ROLLOVER] Now IST={now_ist.time()} < 11:26 -> skipping rollover.")
+    # Only perform rollover at or after 12:30 IST
+    if now_ist.time() < dtime(12, 30):
+        print(f"[ROLLOVER] Now IST={now_ist.time()} < 12:30 -> skipping rollover.")
         return None
 
     near, next_c = get_near_and_next_contract(today)
@@ -1372,6 +1372,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
