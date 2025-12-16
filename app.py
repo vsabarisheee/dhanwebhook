@@ -1056,6 +1056,7 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime, t0: float):
     if now_ist.time() < dtime(12, 30):
         print(f"[ROLLOVER] Now IST={now_ist.time()} < 12:30 -> skipping rollover.")
         return None
+    print(f"[ROLLOVER] Time gate passed. Now IST={now_ist.time()} >= 12:30")
 
     near, next_c = get_near_and_next_contract(today)
     if near is None or next_c is None:
@@ -1372,6 +1373,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
