@@ -1053,7 +1053,7 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime, t0: float):
     now_ist = now_utc + timedelta(hours=5, minutes=30)
 
     # Only perform rollover at or after 12:15 IST
-    if now_ist.time() < dtime(10, 40):
+    if now_ist.time() < dtime(10, 50):
         print(f"[ROLLOVER] Now IST={now_ist.time()} < 11:26 -> skipping rollover.")
         return None
 
@@ -1372,6 +1372,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
