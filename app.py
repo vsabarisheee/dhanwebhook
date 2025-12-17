@@ -10,6 +10,15 @@ import csv
 import math
 from websocket import WebSocketTimeoutException
 import websocket  # for Full Market Depth WS
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
+log = logging.getLogger("TRADE_ENGINE")
+
 
 STATE_FILE = "/tmp/system_positions.json"
 
@@ -30,16 +39,16 @@ def deserialize_contract(contract):
 
 def load_system_positions():
     if not os.path.exists(STATE_FILE):
-        print("[STATE] No existing state file found. Starting fresh.")
+        log.info("[STATE] No existing state file found. Starting fresh.")
         return {}
 
     try:
         with open(STATE_FILE, "r") as f:
             data = json.load(f)
-            print(f"[STATE] Loaded system positions from file: {list(data.keys())}")
+            log.info(f"[STATE] Loaded system positions: {list(data.keys())}")
             return data
     except Exception as e:
-        print(f"[STATE][ERROR] Failed to load state file: {e}")
+        log.error(f"[STATE][ERROR] Failed to load state file: {e}")
         return {}
 
 
@@ -50,9 +59,22 @@ def save_system_positions(state):
             json.dump(state, tmp, indent=2)
 
         os.replace(temp_path, STATE_FILE)
-        print(f"[STATE] System positions saved: {list(state.keys())}")
+        log.info(f"[STATE] System positions saved: {list(state.keys())}")
     except Exception as e:
-        print(f"[STATE][ERROR] Failed to save state file: {e}")
+        log.error(f"[STATE][ERROR] Failed to save state file: {e}")
+
+
+def persist_system_state(system_id: str, state: dict):
+    try:
+        SYSTEM_POSITIONS[system_id] = state
+        save_system_positions(SYSTEM_POSITIONS)
+        log.info(f"[STATE] Persisted state for {system_id}")
+    except Exception as e:
+        log.error(
+            f"[STATE][CRITICAL] Failed to persist state for {system_id}: {e}"
+        )
+
+
 
 
 app = Flask(__name__)
@@ -1240,6 +1262,66 @@ def tv_webhook():
 
     # ---- NEW ENTRY: long synthetic ----
     elif raw_signal == "BUY":
+
+    log.info(f"[SIGNAL][BUY] system_id={system_id} underlying={underlying} qty={qty}")
+
+    if system_id in SYSTEM_POSITIONS:
+        log.warning(f"[BUY][IGNORED] Position already open for {system_id}")
+        return jsonify({
+            "status": "ignored",
+            "reason": f"Position already open for {system_id}"
+        }), 200
+
+    contract = get_contract_for_new_long(today)
+    if not contract:
+        log.error("[BUY][ERROR] No synthetic contract available")
+        return jsonify({
+            "status": "error",
+            "reason": "No synthetic contract available"
+        }), 500
+
+    log.info(
+        f"[BUY][PREPARE] {system_id} "
+        f"expiry={contract['expiry']} strike={contract.get('strike')}"
+    )
+
+    enter_res = enter_synthetic_long(contract, qty, t0)
+
+    if not enter_res.get("entered"):
+        log.error(f"[BUY][FAILED] {system_id} result={enter_res}")
+        return jsonify({
+            "status": "failed",
+            "result": enter_res
+        }), 200
+
+    # -------------------------------
+    # SUCCESS → WRITE JSON STATE
+    # -------------------------------
+    state = {
+        "underlying": underlying,
+        "expiry": contract["expiry"].isoformat(),
+        "strike": contract["strike"],
+        "call_security_id": contract["call_security_id"],
+        "put_security_id": contract["put_security_id"],
+        "qty": qty,
+        "entry_time": datetime.utcnow().isoformat(),
+        "status": "OPEN"
+    }
+
+    persist_system_state(system_id, state)
+
+    log.info(
+        f"[BUY][SUCCESS] {system_id} "
+        f"expiry={state['expiry']} strike={state['strike']}"
+    )
+
+    return jsonify({
+        "status": "ok",
+        "action": "ENTER_SYNTH_LONG",
+        "system_id": system_id,
+        "state": state
+    }), 200
+
         contract = get_contract_for_new_long(today)
         if not contract:
             return jsonify({
@@ -1405,7 +1487,6 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
 
 
 
