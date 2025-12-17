@@ -1291,7 +1291,7 @@ def tv_webhook():
         ), 200
 
     # ---- EXIT synthetic long ----
-    elif raw_signal in ("SELL", "EXIT"):
+        elif raw_signal in ("SELL", "EXIT"):
 
         if system_id not in SYSTEM_POSITIONS:
             return jsonify({
@@ -1299,17 +1299,16 @@ def tv_webhook():
                 "reason": f"No open position for {system_id}",
                 "rollover": rollover_results
             }), 200
-		pos = SYSTEM_POSITIONS[system_id]
-		contract = deserialize_contract(pos["contract"])
-		qty = pos["qty"]
 
+        pos = SYSTEM_POSITIONS[system_id]
+        contract = deserialize_contract(pos["contract"])
+        qty = pos["qty"]
 
-		exit_res = exit_synthetic_long(contract, qty, t0)
+        exit_res = exit_synthetic_long(contract, qty, t0)
 
-		if exit_res.get("exited"):
+        if exit_res.get("exited"):
 			del SYSTEM_POSITIONS[system_id]
 			save_system_positions(SYSTEM_POSITIONS)
-
 
         return jsonify({
             "status": "ok" if exit_res.get("exited") else "failed",
@@ -1424,6 +1423,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
