@@ -1262,9 +1262,9 @@ def tv_webhook():
 
     # ---- NEW ENTRY: long synthetic ----
     elif raw_signal == "BUY":
-    log.info(
-        f"[SIGNAL][BUY] system_id={system_id} underlying={underlying} qty={qty}"
-    )
+        log.info(
+            f"[SIGNAL][BUY] system_id={system_id} underlying={underlying} qty={qty}"
+        )
 
     if system_id in SYSTEM_POSITIONS:
         log.warning(f"[BUY][IGNORED] Position already open for {system_id}")
@@ -1505,6 +1505,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
