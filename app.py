@@ -385,15 +385,7 @@ def handle_rollover_if_needed():
     return rollover_summary
 
 
-# ==================================================
-# ROLLOVER CHECK (SAFE PLACEHOLDER)
-# ==================================================
-def rollover_check(now_utc):
-    now_ist = now_utc + timedelta(hours=5, minutes=30)
-    if now_ist.time() < dtime(12, 30):
-        return None
-    log.info("[ROLLOVER] Time gate passed")
-    return None
+
 
 # ==================================================
 # WEBHOOK
@@ -412,7 +404,7 @@ def tv_webhook():
     if raw_signal in ("BUY", "SELL", "EXIT") and not system_id:
         return jsonify({"error": "system_id required"}), 400
 
-    rollover_check(datetime.utcnow())
+
 
     # ---------------- CHECK ----------------
     if raw_signal == "CHECK":
@@ -439,7 +431,7 @@ def tv_webhook():
             "expiry": res["expiry"],
             "strike": res["strike"],
             "call_security_id": res["call_security_id"],
-            "put_security_id": res["put_security_id"],
+            "put_security_id": res.get("put_security_id"),
             "entry_time": datetime.utcnow().isoformat(),
             "status": "OPEN",
         }
@@ -459,8 +451,7 @@ def tv_webhook():
         state = SYSTEM_POSITIONS[system_id]
         res = exit_synthetic_long(system_id, state)
 
-        if res.get("exited"):
-            remove_system_state(system_id)
+
 
         return jsonify({"status": "ok"}), 200
 
