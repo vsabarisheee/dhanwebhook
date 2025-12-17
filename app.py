@@ -1229,70 +1229,54 @@ def tv_webhook():
 
 
 
-    # ---- MAINTENANCE: CHECK signal (from scheduled TV alert) ----
+        # ---- MAINTENANCE: CHECK signal (from scheduled TV alert) ----
     if raw_signal == "CHECK":
-        # Only do rollover; do not place any new trades
-        return jsonify(
-            {
-                "status": "ok",
-                "mode": "LIVE" if LIVE else "PAPER",
-                "action": "CHECK",
-                "rollover": rollover_results,
-            }
-        ), 200
+        return jsonify({
+            "status": "ok",
+            "mode": "LIVE" if LIVE else "PAPER",
+            "action": "CHECK",
+            "rollover": rollover_results,
+        }), 200
 
     # ---- NEW ENTRY: long synthetic ----
-    if raw_signal == "BUY":
+    elif raw_signal == "BUY":
         contract = get_contract_for_new_long(today)
         if not contract:
-            return (
-                jsonify(
-                    {
-                        "status": "error",
-                        "reason": "No NIFTY synthetic contracts available (metadata not loaded?)",
-                        "rollover": rollover_results,
-                    }
-                ),
-                500,
-            )
+            return jsonify({
+                "status": "error",
+                "reason": "No NIFTY synthetic contracts available",
+                "rollover": rollover_results,
+            }), 500
 
         if system_id in SYSTEM_POSITIONS:
             return jsonify({
                 "status": "ignored",
                 "reason": f"Position already open for {system_id}",
                 "rollover": rollover_results
-        }), 200
+            }), 200
 
-       
         enter_res = enter_synthetic_long(contract, qty, t0)
         ok = enter_res.get("entered", False)
 
-
-        if enter_res.get("entered"):
+        if ok:
             SYSTEM_POSITIONS[system_id] = {
                 "contract": serialize_contract(contract),
                 "qty": qty
             }
             save_system_positions(SYSTEM_POSITIONS)
 
-
-
-
-        return jsonify(
-            {
-                "status": "ok" if ok else "failed",
-                "mode": "LIVE" if LIVE else "PAPER",
-                "action": "ENTER_SYNTH_LONG",
-                "contract": contract["name"],
-                "qty": qty,
-                "rollover": rollover_results,
-                "result": enter_res,
-            }
-        ), 200
+        return jsonify({
+            "status": "ok" if ok else "failed",
+            "mode": "LIVE" if LIVE else "PAPER",
+            "action": "ENTER_SYNTH_LONG",
+            "contract": contract["name"],
+            "qty": qty,
+            "rollover": rollover_results,
+            "result": enter_res,
+        }), 200
 
     # ---- EXIT synthetic long ----
-        elif raw_signal in ("SELL", "EXIT"):
-
+    elif raw_signal in ("SELL", "EXIT"):
         if system_id not in SYSTEM_POSITIONS:
             return jsonify({
                 "status": "ignored",
@@ -1307,8 +1291,8 @@ def tv_webhook():
         exit_res = exit_synthetic_long(contract, qty, t0)
 
         if exit_res.get("exited"):
-			del SYSTEM_POSITIONS[system_id]
-			save_system_positions(SYSTEM_POSITIONS)
+            del SYSTEM_POSITIONS[system_id]
+            save_system_positions(SYSTEM_POSITIONS)
 
         return jsonify({
             "status": "ok" if exit_res.get("exited") else "failed",
@@ -1321,13 +1305,11 @@ def tv_webhook():
             "result": exit_res,
         }), 200
 
-        
-
     else:
-        return (
-            jsonify({"status": "ignored", "reason": f"invalid signal: {raw_signal}"}),
-            400,
-        )
+        return jsonify({
+            "status": "ignored",
+            "reason": f"invalid signal: {raw_signal}"
+        }), 400
 
 
 @app.route("/dhan-postback", methods=["POST"])
@@ -1423,6 +1405,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
