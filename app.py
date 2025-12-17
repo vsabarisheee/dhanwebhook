@@ -202,8 +202,188 @@ def enter_synthetic_long(system_id, underlying, qty):
 
 
 def exit_synthetic_long(system_id, state):
-    log.info(f"[ORDER][EXIT] {system_id}")
-    return {"exited": True}
+    """
+    Exit synthetic long based on JSON state.
+    Handles:
+      - Full synthetic (CALL + PUT)
+      - Partial synthetic (CALL only)
+    Exit order:
+      BUY PUT first, then SELL CALL
+    """
+
+    t0 = time.time()
+    log.info(f"[EXIT][START] system_id={system_id}")
+
+    try:
+        qty = int(state.get("qty", 0))
+        call_sid = state.get("call_security_id")
+        put_sid = state.get("put_security_id")
+
+        if qty <= 0 or not call_sid:
+            log.warning(f"[EXIT][INVALID] Missing qty or call SID for {system_id}")
+            return {"exited": False, "reason": "invalid_state"}
+
+        # --------------------------------------------------
+        # 1️⃣ EXIT PUT first (if exists)
+        # --------------------------------------------------
+        if put_sid:
+            log.info(f"[EXIT][PUT] BUY PUT {put_sid} qty={qty}")
+
+            buy_put = place_order_with_checks(
+                side="BUY",
+                security_id=put_sid,
+                qty=qty,
+                t0=t0,
+                ensure_fill=True
+            )
+
+            if not buy_put.get("placed") or not buy_put.get("filled_completely"):
+                log.error(f"[EXIT][FAILED] BUY PUT failed for {system_id}")
+                return {
+                    "exited": False,
+                    "reason": "buy_put_failed",
+                    "details": buy_put,
+                }
+
+            log.info(f"[EXIT][PUT] PUT exited successfully")
+        else:
+            log.warning(f"[EXIT][PUT] No PUT leg for {system_id} (partial position)")
+
+        # --------------------------------------------------
+        # 2️⃣ EXIT CALL
+        # --------------------------------------------------
+        log.info(f"[EXIT][CALL] SELL CALL {call_sid} qty={qty}")
+
+        sell_call = place_order_with_checks(
+            side="SELL",
+            security_id=call_sid,
+            qty=qty,
+            t0=t0,
+            ensure_fill=True
+        )
+
+        if not sell_call.get("placed") or not sell_call.get("filled_completely"):
+            log.error(f"[EXIT][FAILED] SELL CALL failed for {system_id}")
+            return {
+                "exited": False,
+                "reason": "sell_call_failed",
+                "details": sell_call,
+            }
+
+        log.info(f"[EXIT][CALL] CALL exited successfully")
+
+        # --------------------------------------------------
+        # 3️⃣ SUCCESS → REMOVE STATE
+        # --------------------------------------------------
+        remove_system_state(system_id)
+
+        log.info(f"[EXIT][SUCCESS] system_id={system_id} fully exited")
+
+        return {
+            "exited": True,
+            "system_id": system_id,
+            "qty": qty
+        }
+
+    except Exception as e:
+        log.exception(f"[EXIT][CRITICAL] Exception during EXIT: {e}")
+        return {
+            "exited": False,
+            "reason": "exception",
+            "error": str(e),
+        }
+
+
+def handle_rollover_if_needed():
+    """
+    Performs rollover for all systems whose expiry is today.
+    Called only on CHECK signal.
+    """
+
+    now_utc = datetime.utcnow()
+    today = now_utc.date()
+
+    # IST time check (after 12:30 PM IST)
+    now_ist = now_utc + timedelta(hours=5, minutes=30)
+    if now_ist.time() < dtime(12, 30):
+        log.info(f"[ROLLOVER] Skipped – IST time {now_ist.time()} < 12:30")
+        return {"skipped": True, "reason": "before_time"}
+
+    log.info(f"[ROLLOVER] Started at IST {now_ist.time()}")
+
+    rollover_summary = {}
+
+    for system_id, state in list(SYSTEM_POSITIONS.items()):
+        try:
+            expiry_str = state.get("expiry")
+            if not expiry_str:
+                continue
+
+            expiry_date = date.fromisoformat(expiry_str)
+
+            if expiry_date != today:
+                continue
+
+            log.info(f"[ROLLOVER][{system_id}] Expiry today → rolling")
+
+            # 1️⃣ EXIT old position
+            exit_res = exit_synthetic_long(system_id, state)
+            if not exit_res.get("exited"):
+                log.error(f"[ROLLOVER][{system_id}] EXIT failed → skip rollover")
+                rollover_summary[system_id] = {
+                    "rolled": False,
+                    "reason": "exit_failed",
+                    "exit_result": exit_res,
+                }
+                continue
+
+            # 2️⃣ ENTER new position
+            qty = state.get("qty")
+            underlying = state.get("underlying", "NIFTY")
+
+            enter_res = enter_synthetic_long(system_id, underlying, qty)
+            if not enter_res.get("entered"):
+                log.error(f"[ROLLOVER][{system_id}] ENTER failed after EXIT")
+                rollover_summary[system_id] = {
+                    "rolled": False,
+                    "reason": "enter_failed_after_exit",
+                    "enter_result": enter_res,
+                }
+                continue
+
+            # 3️⃣ UPDATE STATE
+            new_state = {
+                "underlying": underlying,
+                "expiry": enter_res["expiry"],
+                "strike": enter_res["strike"],
+                "call_security_id": enter_res["call_security_id"],
+                "put_security_id": enter_res.get("put_security_id"),
+                "qty": qty,
+                "entry_time": datetime.utcnow().isoformat(),
+                "status": "OPEN",
+                "rolled_from": expiry_str,
+            }
+
+            persist_system_state(system_id, new_state)
+
+            log.info(f"[ROLLOVER][{system_id}] SUCCESS")
+
+            rollover_summary[system_id] = {
+                "rolled": True,
+                "from": expiry_str,
+                "to": enter_res["expiry"],
+            }
+
+        except Exception as e:
+            log.exception(f"[ROLLOVER][{system_id}] CRITICAL ERROR")
+            rollover_summary[system_id] = {
+                "rolled": False,
+                "reason": "exception",
+                "error": str(e),
+            }
+
+    return rollover_summary
+
 
 # ==================================================
 # ROLLOVER CHECK (SAFE PLACEHOLDER)
@@ -236,7 +416,10 @@ def tv_webhook():
 
     # ---------------- CHECK ----------------
     if raw_signal == "CHECK":
-        return jsonify({"status": "ok", "action": "CHECK"}), 200
+        rollover_result = handle_rollover_if_needed()
+
+        return jsonify({"status": "ok","action": "CHECK","rollover": rollover_result}), 200
+
 
     # ---------------- BUY ----------------
     elif raw_signal == "BUY":
