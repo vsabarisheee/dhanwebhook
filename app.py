@@ -80,14 +80,125 @@ SYSTEM_POSITIONS = load_system_positions()
 # (You will plug your existing Dhan logic here)
 # ==================================================
 def enter_synthetic_long(system_id, underlying, qty):
-    log.info(f"[ORDER][ENTER] {system_id} {underlying} qty={qty}")
-    return {
-        "entered": True,
-        "expiry": "2025-01-30",
-        "strike": 22500,
-        "call_security_id": "12345",
-        "put_security_id": "67890",
-    }
+    """
+    Places a synthetic future:
+      BUY ATM CALL
+      SELL ATM PUT
+
+    Returns dict with:
+      entered: bool
+      expiry
+      strike
+      call_security_id
+      put_security_id
+    """
+
+    t0 = time.time()
+    log.info(f"[BUY][START] system_id={system_id} underlying={underlying} qty={qty}")
+
+    try:
+        # --------------------------------------------------
+        # 1️⃣ Decide contract (near / next expiry)
+        # --------------------------------------------------
+        today = datetime.utcnow().date()
+        contract = get_contract_for_new_long(today)
+
+        if not contract:
+            log.error("[BUY][ERROR] No contract available")
+            return {"entered": False, "reason": "no_contract"}
+
+        contract = ensure_contract_populated(contract)
+
+        expiry = contract["expiry"]
+        strike = contract["strike"]
+        call_sid = contract["call_security_id"]
+        put_sid = contract["put_security_id"]
+
+        log.info(
+            f"[BUY][CONTRACT] expiry={expiry} strike={strike} "
+            f"CE={call_sid} PE={put_sid}"
+        )
+
+        # --------------------------------------------------
+        # 2️⃣ BUY CALL (must succeed)
+        # --------------------------------------------------
+        buy_call = place_order_with_checks(
+            side="BUY",
+            security_id=call_sid,
+            qty=qty,
+            t0=t0,
+            ensure_fill=True
+        )
+
+        if not buy_call.get("placed") or not buy_call.get("filled_completely"):
+            log.error("[BUY][FAILED] BUY CALL leg failed")
+            return {
+                "entered": False,
+                "reason": "buy_call_failed",
+                "details": buy_call,
+            }
+
+        log.info("[BUY][CALL] BUY CALL successful")
+        
+        # --------------------------------------------------
+        # 3️⃣ SELL PUT (best effort)
+        # --------------------------------------------------
+        sell_put = place_order_with_checks(
+            side="SELL",
+            security_id=put_sid,
+            qty=qty,
+            t0=t0,
+            ensure_fill=False
+        )
+
+        if not sell_put.get("placed"):
+            log.error("[BUY][CRITICAL] BUY CALL filled but SELL PUT failed")
+            log.error("[BUY][MANUAL] Naked CALL position exists – intervention required")
+        
+            # IMPORTANT:
+            # BUY CALL already created broker exposure
+            # We MUST mark this system as OPEN in state
+            return {
+                "entered": True,            # ← THIS IS THE KEY CHANGE
+                "partial": True,
+                "underlying": underlying,
+                "expiry": expiry.isoformat(),
+                "strike": strike,
+                "call_security_id": call_sid,
+                "put_security_id": None,    # PUT leg missing
+                "qty": qty,
+                "warning": "SELL_PUT_FAILED"
+            }
+
+            
+        log.info("[BUY][PUT] SELL PUT placed")
+
+        # --------------------------------------------------
+        # 4️⃣ SUCCESS
+        # --------------------------------------------------
+        log.info(
+            f"[BUY][SUCCESS] system_id={system_id} "
+            f"expiry={expiry} strike={strike}"
+        )
+
+        return {
+            "entered": True,
+            "underlying": underlying,
+            "expiry": expiry.isoformat(),
+            "strike": strike,
+            "call_security_id": call_sid,
+            "put_security_id": put_sid,
+            "qty": qty,
+        }
+
+    except Exception as e:
+        log.exception(f"[BUY][CRITICAL] Exception during BUY: {e}")
+        return {
+            "entered": False,
+            "reason": "exception",
+            "error": str(e),
+        }
+
 
 
 def exit_synthetic_long(system_id, state):
