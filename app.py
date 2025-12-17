@@ -1299,10 +1299,10 @@ def tv_webhook():
                 "reason": f"No open position for {system_id}",
                 "rollover": rollover_results
             }), 200
-
-        pos = SYSTEM_POSITIONS[system_id]
+		pos = SYSTEM_POSITIONS[system_id]
 		contract = deserialize_contract(pos["contract"])
 		qty = pos["qty"]
+
 
 		exit_res = exit_synthetic_long(contract, qty, t0)
 
@@ -1424,6 +1424,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
