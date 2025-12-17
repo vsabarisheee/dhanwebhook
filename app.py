@@ -1262,8 +1262,9 @@ def tv_webhook():
 
     # ---- NEW ENTRY: long synthetic ----
     elif raw_signal == "BUY":
-
-    log.info(f"[SIGNAL][BUY] system_id={system_id} underlying={underlying} qty={qty}")
+    log.info(
+        f"[SIGNAL][BUY] system_id={system_id} underlying={underlying} qty={qty}"
+    )
 
     if system_id in SYSTEM_POSITIONS:
         log.warning(f"[BUY][IGNORED] Position already open for {system_id}")
@@ -1280,11 +1281,6 @@ def tv_webhook():
             "reason": "No synthetic contract available"
         }), 500
 
-    log.info(
-        f"[BUY][PREPARE] {system_id} "
-        f"expiry={contract['expiry']} strike={contract.get('strike')}"
-    )
-
     enter_res = enter_synthetic_long(contract, qty, t0)
 
     if not enter_res.get("entered"):
@@ -1293,6 +1289,28 @@ def tv_webhook():
             "status": "failed",
             "result": enter_res
         }), 200
+
+    state = {
+        "underlying": underlying,
+        "expiry": contract["expiry"].isoformat(),
+        "strike": contract["strike"],
+        "call_security_id": contract["call_security_id"],
+        "put_security_id": contract["put_security_id"],
+        "qty": qty,
+        "entry_time": datetime.utcnow().isoformat(),
+        "status": "OPEN"
+    }
+
+    persist_system_state(system_id, state)
+
+    log.info(f"[BUY][SUCCESS] {system_id}")
+
+    return jsonify({
+        "status": "ok",
+        "action": "ENTER_SYNTH_LONG",
+        "system_id": system_id,
+        "state": state
+    }), 200
 
     # -------------------------------
     # SUCCESS → WRITE JSON STATE
@@ -1487,6 +1505,7 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
