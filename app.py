@@ -1,43 +1,43 @@
-from flask import Flask, request, jsonify
-import requests
-import os
-import time
-import json
-import tempfile
-import struct
-from datetime import date, datetime, time as dtime, timedelta
-import csv
-import math
-from websocket import WebSocketTimeoutException
-import websocket  # for Full Market Depth WS
-import logging
+    from flask import Flask, request, jsonify
+    import requests
+    import os
+    import time
+    import json
+    import tempfile
+    import struct
+    from datetime import date, datetime, time as dtime, timedelta
+    import csv
+    import math
+    from websocket import WebSocketTimeoutException
+    import websocket  # for Full Market Depth WS
+    import logging
 
-logging.basicConfig(
+    logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
-)
+    )
 
-log = logging.getLogger("TRADE_ENGINE")
-
-
-STATE_FILE = "/tmp/system_positions.json"
+    log = logging.getLogger("TRADE_ENGINE")
 
 
-def serialize_contract(contract):
+    STATE_FILE = "/tmp/system_positions.json"
+
+
+    def serialize_contract(contract):
     c = contract.copy()
     if isinstance(c.get("expiry"), date):
         c["expiry"] = c["expiry"].isoformat()
     return c
 
 
-def deserialize_contract(contract):
+    def deserialize_contract(contract):
     c = contract.copy()
     if isinstance(c.get("expiry"), str):
         c["expiry"] = date.fromisoformat(c["expiry"])
     return c
 
 
-def load_system_positions():
+    def load_system_positions():
     if not os.path.exists(STATE_FILE):
         log.info("[STATE] No existing state file found. Starting fresh.")
         return {}
@@ -52,7 +52,7 @@ def load_system_positions():
         return {}
 
 
-def save_system_positions(state):
+    def save_system_positions(state):
     try:
         fd, temp_path = tempfile.mkstemp()
         with os.fdopen(fd, "w") as tmp:
@@ -64,7 +64,7 @@ def save_system_positions(state):
         log.error(f"[STATE][ERROR] Failed to save state file: {e}")
 
 
-def persist_system_state(system_id: str, state: dict):
+    def persist_system_state(system_id: str, state: dict):
     try:
         SYSTEM_POSITIONS[system_id] = state
         save_system_positions(SYSTEM_POSITIONS)
@@ -77,73 +77,73 @@ def persist_system_state(system_id: str, state: dict):
 
 
 
-app = Flask(__name__)
+    app = Flask(__name__)
 
-# --------------------------------------------------
-# SYSTEM-LEVEL POSITION REGISTRY (CRITICAL)
-# --------------------------------------------------
-# system_id : {
-#   "contract": <contract_dict>,
-#   "qty": int
-# }
-SYSTEM_POSITIONS = load_system_positions()
-
-
-# --------------------------------------------------
-# CONFIG
-# --------------------------------------------------
-
-# From your environment (Render "Environment" section)
-# Must be your numeric Dhan client id (e.g. 1101700964), NOT the API key
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
-DHAN_API_KEY = os.getenv("DHAN_API_KEY")  # keep separate if you need it later
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
-
-# Dhan v2 base URL
-DHAN_BASE_URL = "https://api.dhan.co/v2"
-
-# Paper / Live toggle
-LIVE = True  # <-- set to True when you're 100% ready
-
-# Turn on/off margin pre-check via /margincalculator
-MARGIN_CHECK_ENABLED = False
-
-# Product type:
-#   "INTRADAY" -> intraday trades only
-#   "CNC"      -> positional / carry forward for F&O
-PRODUCT_TYPE = "CNC"   # you want positional
-
-# Liquidity rules
-MAX_SPREAD_POINTS = 15.0   # max allowed (ask - bid)
-MIN_QTY_MULTIPLIER = 1.0  # both bid/ask qty should be >= qty * this
-
-# Order polling settings for "ensure filled" logic
-ORDER_FILL_MAX_WAIT = 15      # seconds
-ORDER_FILL_POLL_INTERVAL = 1  # seconds
-
-# NIFTY synthetic future contracts:
-# We will AUTO-POPULATE this from Dhan instrument master + option chain
-NIFTY_SYNTH_CONTRACTS = []  # will be filled dynamically
-
-# Underlying / option metadata for NIFTY
-NIFTY_UNDERLYING_SYMBOL = "NIFTY"
-NIFTY_UNDERLYING_SEG = "IDX_I"  # as per Option Chain docs
-
-# For Nifty 50 index, Option Chain docs use Security ID 13 as example.
-# We'll use 13 as the underlying SecurityId for NIFTY.
-NIFTY_UNDERLYING_SECURITY_ID = 13
-
-NIFTY_OPTION_METADATA = {}  # expiry_date (date) -> list of rows (dicts) for that expiry
-
-# Simple cache for Dhan postback info (in-memory)
-ORDER_STATUS_CACHE = {}
+    # --------------------------------------------------
+    # SYSTEM-LEVEL POSITION REGISTRY (CRITICAL)
+    # --------------------------------------------------
+    # system_id : {
+    #   "contract": <contract_dict>,
+    #   "qty": int
+    # }
+    SYSTEM_POSITIONS = load_system_positions()
 
 
-# --------------------------------------------------
-# BASIC HELPERS
-# --------------------------------------------------
+    # --------------------------------------------------
+    # CONFIG
+    # --------------------------------------------------
 
-def get_field(row: dict, *names):
+    # From your environment (Render "Environment" section)
+    # Must be your numeric Dhan client id (e.g. 1101700964), NOT the API key
+    DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+    DHAN_API_KEY = os.getenv("DHAN_API_KEY")  # keep separate if you need it later
+    DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+
+    # Dhan v2 base URL
+    DHAN_BASE_URL = "https://api.dhan.co/v2"
+
+    # Paper / Live toggle
+    LIVE = True  # <-- set to True when you're 100% ready
+
+    # Turn on/off margin pre-check via /margincalculator
+    MARGIN_CHECK_ENABLED = False
+
+    # Product type:
+    #   "INTRADAY" -> intraday trades only
+    #   "CNC"      -> positional / carry forward for F&O
+    PRODUCT_TYPE = "CNC"   # you want positional
+
+    # Liquidity rules
+    MAX_SPREAD_POINTS = 15.0   # max allowed (ask - bid)
+    MIN_QTY_MULTIPLIER = 1.0  # both bid/ask qty should be >= qty * this
+
+    # Order polling settings for "ensure filled" logic
+    ORDER_FILL_MAX_WAIT = 15      # seconds
+    ORDER_FILL_POLL_INTERVAL = 1  # seconds
+
+    # NIFTY synthetic future contracts:
+    # We will AUTO-POPULATE this from Dhan instrument master + option chain
+    NIFTY_SYNTH_CONTRACTS = []  # will be filled dynamically
+
+    # Underlying / option metadata for NIFTY
+    NIFTY_UNDERLYING_SYMBOL = "NIFTY"
+    NIFTY_UNDERLYING_SEG = "IDX_I"  # as per Option Chain docs
+
+    # For Nifty 50 index, Option Chain docs use Security ID 13 as example.
+    # We'll use 13 as the underlying SecurityId for NIFTY.
+    NIFTY_UNDERLYING_SECURITY_ID = 13
+
+    NIFTY_OPTION_METADATA = {}  # expiry_date (date) -> list of rows (dicts) for that expiry
+
+    # Simple cache for Dhan postback info (in-memory)
+    ORDER_STATUS_CACHE = {}
+
+
+    # --------------------------------------------------
+    # BASIC HELPERS
+    # --------------------------------------------------
+
+    def get_field(row: dict, *names):
     """
     Safely fetch first non-empty field from a row by trying multiple column names.
     Helps handle slight variations in Dhan CSV headers.
@@ -154,7 +154,7 @@ def get_field(row: dict, *names):
     return None
 
 
-def dhan_headers_json(include_client=False):
+    def dhan_headers_json(include_client=False):
     """
     Common headers for JSON APIs.
     For Orders/Funds/Margin, Dhan requires at least access-token.
@@ -169,7 +169,7 @@ def dhan_headers_json(include_client=False):
     return headers
 
 
-def load_nifty_option_metadata():
+    def load_nifty_option_metadata():
     """
     Load NIFTY index options (monthly only) from Dhan detailed master CSV.
 
@@ -282,7 +282,7 @@ def load_nifty_option_metadata():
         print("[EXCEPTION] load_nifty_option_metadata:", e)
 
 
-def pick_atm_for_expiry(expiry: date):
+    def pick_atm_for_expiry(expiry: date):
     """
     For a given expiry, use Option Chain API to:
       1) Fetch NIFTY spot (last_price / underlyingValue / ltp)
@@ -431,7 +431,7 @@ def pick_atm_for_expiry(expiry: date):
 
 
 
-def ensure_contract_populated(contract: dict):
+    def ensure_contract_populated(contract: dict):
     """
     Make sure the given synthetic contract dict has:
       - strike
@@ -453,13 +453,13 @@ def ensure_contract_populated(contract: dict):
     return contract
 
 
-def sorted_synth_contracts():
+    def sorted_synth_contracts():
     """Return NIFTY synthetic contracts (auto-built) sorted by expiry."""
     load_nifty_option_metadata()
     return sorted(NIFTY_SYNTH_CONTRACTS, key=lambda c: c["expiry"])
 
 
-def get_near_and_next_contract(today: date):
+    def get_near_and_next_contract(today: date):
     """
     near: first contract whose expiry >= today
     next: contract after near, if exists
@@ -483,7 +483,7 @@ def get_near_and_next_contract(today: date):
     return near, next_c
 
 
-def get_contract_for_new_long(today: date):
+    def get_contract_for_new_long(today: date):
     """
     For NEW synthetic long:
     - If near expiry == today and next exists -> use next
@@ -510,7 +510,7 @@ def get_contract_for_new_long(today: date):
     return contract
 
 
-def get_positions():
+    def get_positions():
     """GET /positions – all open positions for the day."""
     try:
         resp = requests.get(
@@ -527,11 +527,11 @@ def get_positions():
         return []
 
 
-# --------------------------------------------------
-# FULL MARKET DEPTH (20 LEVEL) FOR LIQUIDITY CHECK
-# --------------------------------------------------
+    # --------------------------------------------------
+    # FULL MARKET DEPTH (20 LEVEL) FOR LIQUIDITY CHECK
+    # --------------------------------------------------
 
-def get_top_of_book_from_depth(security_id: str):
+    def get_top_of_book_from_depth(security_id: str):
     """
     Uses Dhan Full Market Depth (20-level) WebSocket to fetch
     best bid & ask for a single NSE_FNO instrument.
@@ -639,7 +639,7 @@ def get_top_of_book_from_depth(security_id: str):
     return {"bid": best_bid, "ask": best_ask}
 
 
-def check_liquidity(security_id: str, qty: int):
+    def check_liquidity(security_id: str, qty: int):
     """
     Returns (ok, info_dict) based on:
       - both bid & ask exist
@@ -687,11 +687,11 @@ def check_liquidity(security_id: str, qty: int):
     return ok, info
 
 
-# --------------------------------------------------
-# FUNDS / MARGIN CHECK
-# --------------------------------------------------
+    # --------------------------------------------------
+    # FUNDS / MARGIN CHECK
+    # --------------------------------------------------
 
-def check_margin(security_id: str, transaction_type: str, qty: int, price: float):
+    def check_margin(security_id: str, transaction_type: str, qty: int, price: float):
     """
     Uses POST /margincalculator to estimate margin and availableBalance.
     Returns (ok, response_json_or_text)
@@ -739,11 +739,11 @@ def check_margin(security_id: str, transaction_type: str, qty: int, price: float
         return True, {"error": str(e)}
 
 
-# --------------------------------------------------
-# ORDERS (v2) – place / get / wait for fill
-# --------------------------------------------------
+    # --------------------------------------------------
+    # ORDERS (v2) – place / get / wait for fill
+    # --------------------------------------------------
 
-def _post_order(side: str, security_id: str, qty: int, t0: float, correlation_id: str = None):
+    def _post_order(side: str, security_id: str, qty: int, t0: float, correlation_id: str = None):
     """
     Low-level POST /orders.
     Returns (status_code, response_json_or_text)
@@ -819,7 +819,7 @@ def _post_order(side: str, security_id: str, qty: int, t0: float, correlation_id
 
 
 
-def get_order(order_id: str):
+    def get_order(order_id: str):
     """
     GET /orders/{order-id}.
     """
@@ -846,7 +846,7 @@ def get_order(order_id: str):
         return None
 
 
-def wait_for_fill(order_id: str):
+    def wait_for_fill(order_id: str):
     """
     Polls GET /orders/{order-id} until order fully traded or timeout.
     Returns (filled_completely: bool, last_status_dict)
@@ -881,13 +881,13 @@ def wait_for_fill(order_id: str):
     return False, last_status
 
 
-def place_order_with_checks(
+    def place_order_with_checks(
     side: str,
     security_id: str,
     qty: int,
     t0: float,
     ensure_fill: bool = False,
-):
+    ):
     """
     1) Check liquidity via Full Depth (spread + depth).
        - If not OK, wait 5 sec and re-check.
@@ -970,11 +970,11 @@ def place_order_with_checks(
     return result
 
 
-# --------------------------------------------------
-# SYNTHETIC FUTURE (CALL + PUT) OPERATIONS
-# --------------------------------------------------
+    # --------------------------------------------------
+    # SYNTHETIC FUTURE (CALL + PUT) OPERATIONS
+    # --------------------------------------------------
 
-def get_open_synth_long_for_contract(contract):
+    def get_open_synth_long_for_contract(contract):
     """
     Check if we have an open synthetic long (long CALL + short PUT)
     for this specific contract.
@@ -1019,7 +1019,7 @@ def get_open_synth_long_for_contract(contract):
     return None
 
 
-def get_open_synth_long_any():
+    def get_open_synth_long_any():
     """Find any open synthetic long across configured expiries."""
     for c in sorted_synth_contracts():
         info = get_open_synth_long_for_contract(c)
@@ -1028,7 +1028,7 @@ def get_open_synth_long_any():
     return None
 
 
-def enter_synthetic_long(contract, qty: int, t0: float):
+    def enter_synthetic_long(contract, qty: int, t0: float):
     """
     Long synthetic future = Buy CALL + Sell PUT.
     RULE: ALWAYS execute BUY leg first, and wait for fill.
@@ -1064,7 +1064,7 @@ def enter_synthetic_long(contract, qty: int, t0: float):
     }
 
 
-def exit_synthetic_long(contract, qty: int, t0: float):
+    def exit_synthetic_long(contract, qty: int, t0: float):
     """
     Exit synthetic long:
       existing = long CALL + short PUT
@@ -1102,7 +1102,7 @@ def exit_synthetic_long(contract, qty: int, t0: float):
     }
 
 
-def rollover_synthetic_if_needed(today: date, now_utc: datetime, t0: float):
+    def rollover_synthetic_if_needed(today: date, now_utc: datetime, t0: float):
 
     """
     If today is expiry of near-month synthetic contract and there is an
@@ -1174,12 +1174,12 @@ def rollover_synthetic_if_needed(today: date, now_utc: datetime, t0: float):
 
 
 
-# --------------------------------------------------
-# FLASK ROUTES
-# --------------------------------------------------
+    # --------------------------------------------------
+    # FLASK ROUTES
+    # --------------------------------------------------
 
-@app.route("/tv-webhook", methods=["POST"])
-def tv_webhook():
+    @app.route("/tv-webhook", methods=["POST"])
+    def tv_webhook():
     # ---- LATENCY START ----
     t0 = time.time()
     print("TV webhook received at:", datetime.utcnow(), "UTC")
@@ -1203,7 +1203,7 @@ def tv_webhook():
     """
     data = request.get_json() or {}
     print("[TV] Received payload:", data)
-    
+
     # ---- LATENCY TEST GUARD (no real orders) ----
     if data.get("latency_test") is True:
         return jsonify({
@@ -1226,7 +1226,7 @@ def tv_webhook():
             "reason": "system_id missing for trade signal"
         }), 400
 
-   
+
 
 
 
@@ -1412,8 +1412,8 @@ def tv_webhook():
         }), 400
 
 
-@app.route("/dhan-postback", methods=["POST"])
-def dhan_postback():
+    @app.route("/dhan-postback", methods=["POST"])
+    def dhan_postback():
     """
     Dhan Postback (order update) webhook receiver.
 
@@ -1431,8 +1431,8 @@ def dhan_postback():
     return jsonify({"status": "ok"})
 
 
-@app.route("/health/dhan", methods=["GET"])
-def health_dhan():
+    @app.route("/health/dhan", methods=["GET"])
+    def health_dhan():
     """
     Quick health check to verify that DHAN_ACCESS_TOKEN and DHAN_CLIENT_ID
     are valid and Dhan API is reachable.
@@ -1468,13 +1468,13 @@ def health_dhan():
         }), 500
 
 
-@app.route("/")
-def home():
+    @app.route("/")
+    def home():
     return "Dhan webhook server is running – synthetic NIFTY (CALL+PUT) bot (auto ATM, monthly expiry)."
 
 
-@app.route("/admin/reset-system", methods=["POST"])
-def reset_system_position():
+    @app.route("/admin/reset-system", methods=["POST"])
+    def reset_system_position():
     data = request.get_json() or {}
     system_id = data.get("system_id")
 
@@ -1501,10 +1501,11 @@ def reset_system_position():
         "message": f"System {system_id} reset successfully"
     }), 200
 
-if __name__ == "__main__":
+    if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
