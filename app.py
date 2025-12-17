@@ -3,6 +3,7 @@ import requests
 import os
 import time
 import json
+import tempfile
 import struct
 from datetime import date, datetime, time as dtime, timedelta
 import csv
@@ -10,17 +11,61 @@ import math
 from websocket import WebSocketTimeoutException
 import websocket  # for Full Market Depth WS
 
+STATE_FILE = "/tmp/system_positions.json"
+
+
+def serialize_contract(contract):
+    c = contract.copy()
+    if isinstance(c.get("expiry"), date):
+        c["expiry"] = c["expiry"].isoformat()
+    return c
+
+
+def deserialize_contract(contract):
+    c = contract.copy()
+    if isinstance(c.get("expiry"), str):
+        c["expiry"] = date.fromisoformat(c["expiry"])
+    return c
+
+
+def load_system_positions():
+    if not os.path.exists(STATE_FILE):
+        print("[STATE] No existing state file found. Starting fresh.")
+        return {}
+
+    try:
+        with open(STATE_FILE, "r") as f:
+            data = json.load(f)
+            print(f"[STATE] Loaded system positions from file: {list(data.keys())}")
+            return data
+    except Exception as e:
+        print(f"[STATE][ERROR] Failed to load state file: {e}")
+        return {}
+
+
+def save_system_positions(state):
+    try:
+        fd, temp_path = tempfile.mkstemp()
+        with os.fdopen(fd, "w") as tmp:
+            json.dump(state, tmp, indent=2)
+
+        os.replace(temp_path, STATE_FILE)
+        print(f"[STATE] System positions saved: {list(state.keys())}")
+    except Exception as e:
+        print(f"[STATE][ERROR] Failed to save state file: {e}")
+
+
 app = Flask(__name__)
 
 # --------------------------------------------------
 # SYSTEM-LEVEL POSITION REGISTRY (CRITICAL)
 # --------------------------------------------------
-SYSTEM_POSITIONS = {
-    # system_id : {
-    #   "contract": <contract_dict>,
-    #   "qty": int
-    # }
-}
+# system_id : {
+#   "contract": <contract_dict>,
+#   "qty": int
+# }
+SYSTEM_POSITIONS = load_system_positions()
+
 
 # --------------------------------------------------
 # CONFIG
@@ -1225,9 +1270,12 @@ def tv_webhook():
 
         if enter_res.get("entered"):
             SYSTEM_POSITIONS[system_id] = {
-                "contract": contract,
+                "contract": serialize_contract(contract),
                 "qty": qty
             }
+            save_system_positions(SYSTEM_POSITIONS)
+
+
 
 
         return jsonify(
@@ -1253,13 +1301,15 @@ def tv_webhook():
             }), 200
 
         pos = SYSTEM_POSITIONS[system_id]
-        contract = pos["contract"]
-        pos_qty = pos["qty"]
+		contract = deserialize_contract(pos["contract"])
+		qty = pos["qty"]
 
-        exit_res = exit_synthetic_long(contract, pos_qty, t0)
+		exit_res = exit_synthetic_long(contract, qty, t0)
 
-        if exit_res.get("exited"):
-            del SYSTEM_POSITIONS[system_id]
+		if exit_res.get("exited"):
+			del SYSTEM_POSITIONS[system_id]
+			save_system_positions(SYSTEM_POSITIONS)
+
 
         return jsonify({
             "status": "ok" if exit_res.get("exited") else "failed",
@@ -1267,7 +1317,7 @@ def tv_webhook():
             "action": "EXIT_SYNTH_LONG",
             "system_id": system_id,
             "contract": contract["name"],
-            "closed_qty": pos_qty,
+            "closed_qty": qty,
             "rollover": rollover_results,
             "result": exit_res,
         }), 200
@@ -1361,6 +1411,7 @@ def reset_system_position():
 
     # Clear local state
     del SYSTEM_POSITIONS[system_id]
+	save_system_positions(SYSTEM_POSITIONS)
 
     print(f"[ADMIN] System state reset for {system_id}")
 
@@ -1373,7 +1424,6 @@ if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
 
 
 
