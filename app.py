@@ -169,10 +169,11 @@ def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
         )
         r.raise_for_status()
 
-        expiries = r.json()
+        resp = r.json()
 
-        if not isinstance(expiries, list):
-            log.error(f"[EXPIRY] Unexpected response: {expiries}")
+        expiries = resp.get("data")
+        if not isinstance(expiries, list) or not expiries:
+            log.error(f"[EXPIRY] Invalid expiry response: {resp}")
             return []
 
         log.info(f"[EXPIRY][LIST] {expiries}")
@@ -183,172 +184,169 @@ def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
         return []
 
 
+def fetch_option_chain_for_expiry(expiry_str):
+    uid = os.getenv("NIFTY_UNDERLYING_ID")
+    if not uid:
+        log.error("[CONFIG] NIFTY_UNDERLYING_ID not set")
+        return None, None
 
-# ==================================================
-# ATM OPTION SELECTION (REAL)
-# ==================================================
-def get_contract_for_new_long(today):
-    try:
-        uid = os.getenv("NIFTY_UNDERLYING_ID")
-        if not uid:
-            log.error("[CONFIG] NIFTY_UNDERLYING_ID not set")
-            return None
-
-        underlying_id = int(uid)
-
-        expiries = get_option_expiries(underlying_id)
-        if not expiries:
-            log.error("[CONTRACT] No expiries returned")
-            return None
-
-        expiry_str = expiries[0]
-        expiry_date = date.fromisoformat(expiry_str)
-
-        payload = {
-            "UnderlyingScrip": underlying_id,
-            "UnderlyingSeg": "IDX_I",
-            "Expiry": expiry_str
-        }
-
-        r = requests.post(
-            "https://api.dhan.co/v2/optionchain",
-            headers=dhan_headers(),
-            json=payload,
-            timeout=10
-        )
-        r.raise_for_status()
-
-        oc = r.json().get("data", {}).get("oc", {})
-        if expiry_str not in oc:
-            log.error("[CONTRACT] Expiry not found in option chain")
-            return None
-
-        expiry_data = oc[expiry_str]
-        spot = float(expiry_data["last_price"])
-
-        strikes = [
-            float(k) for k in expiry_data.keys()
-            if k != "last_price"
-        ]
-
-        # -----------------------------
-        # ATM + SPREAD LOGIC (INSIDE try)
-        # -----------------------------
-        rounded_atm = round(spot / 100) * 100
-
-        candidate_strikes = sorted(
-            strikes,
-            key=lambda x: abs(x - rounded_atm)
-        )
-
-        MAX_SPREAD = 20
-
-        for strike in candidate_strikes:
-            sd = expiry_data.get(str(strike))
-            if not sd:
-                continue
-
-            ce = sd.get("ce")
-            pe = sd.get("pe")
-            if not ce or not pe:
-                continue
-
-            ce_bid = float(ce.get("bestBidPrice", 0))
-            ce_ask = float(ce.get("bestAskPrice", 0))
-            pe_bid = float(pe.get("bestBidPrice", 0))
-            pe_ask = float(pe.get("bestAskPrice", 0))
-
-            if ce_bid <= 0 or pe_bid <= 0:
-                continue
-
-            if (ce_ask - ce_bid) <= MAX_SPREAD and (pe_ask - pe_bid) <= MAX_SPREAD:
-                return {
-                    "expiry": expiry_date,
-                    "strike": strike,
-                    "call_security_id": ce["securityId"],
-                    "put_security_id": pe["securityId"]
-                }
-
-        log.error("[CONTRACT] No liquid ATM strike found")
-        return None
-
-    except Exception as e:
-        log.error(f"[CONTRACT][ERROR] {e}")
-        return None
-
-
-
-
-# ==================================================
-# ENTER SYNTHETIC LONG
-# ==================================================
-def enter_synthetic_long(system_id, underlying, qty):
-    contract = get_contract_for_new_long(date.today())
-    if not contract:
-        return {"entered": False}
-
-    buy_call = place_order_with_checks("BUY", contract["call_security_id"], qty, True)
-    if not buy_call.get("placed"):
-        return {"entered": False}
-
-    sell_put = place_order_with_checks("SELL", contract["put_security_id"], qty, False)
-
-    return {
-        "entered": True,
-        "underlying": underlying,
-        "expiry": contract["expiry"].isoformat(),
-        "strike": contract["strike"],
-        "call_security_id": contract["call_security_id"],
-        "put_security_id": contract["put_security_id"] if sell_put.get("placed") else None,
-        "qty": qty,
+    payload = {
+        "UnderlyingScrip": int(uid),
+        "UnderlyingSeg": "IDX_I",
+        "Expiry": expiry_str
     }
 
-# ==================================================
-# EXIT SYNTHETIC LONG
-# ==================================================
-def exit_synthetic_long(system_id, state):
-    qty = state["qty"]
-    call_sid = state["call_security_id"]
-    put_sid = state.get("put_security_id")
+    r = requests.post(
+        "https://api.dhan.co/v2/optionchain",
+        headers=dhan_headers(),
+        json=payload,
+        timeout=10
+    )
+    r.raise_for_status()
 
-    exited = False
+    oc = r.json().get("data", {}).get("oc", {})
+    if expiry_str not in oc:
+        log.error("[CHAIN] Expiry not found in option chain")
+        return None, None
 
-    if put_sid and broker_has_position(put_sid, qty):
-        place_order_with_checks("BUY", put_sid, qty, True)
-        exited = True
+    expiry_data = oc[expiry_str]
+    spot = float(expiry_data["last_price"])
+    return spot, expiry_data
 
-    if broker_has_position(call_sid, qty):
-        place_order_with_checks("SELL", call_sid, qty, True)
-        exited = True
 
-    if exited:
-        remove_system_state(system_id)
-        return {"exited": True}
+def get_monthly_expiries(expiries):
+    """
+    Filters only MONTHLY expiries (last expiry of each month)
+    """
+    monthly = {}
+    for e in expiries:
+        d = date.fromisoformat(e)
+        key = (d.year, d.month)
+        monthly[key] = e  # last one wins
 
-    return {"exited": False}
+    return sorted(monthly.values())
 
-# ==================================================
-# ROLLOVER
-# ==================================================
-def handle_rollover_if_needed():
-    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
-    if now_ist.time() < dtime(12, 30):
-        return {}
+def is_monthly_expiry_today(monthly_expiries):
+    today = date.today().isoformat()
+    return today in monthly_expiries
 
+def choose_entry_expiry(monthly_expiries):
+    """
+    If today is expiry → use next month
+    Else → use current month
+    """
     today = date.today()
-    summary = {}
 
-    for system_id, state in list(SYSTEM_POSITIONS.items()):
-        if date.fromisoformat(state["expiry"]) != today:
+    for e in monthly_expiries:
+        d = date.fromisoformat(e)
+        if d >= today:
+            if d == today:
+                idx = monthly_expiries.index(e)
+                return monthly_expiries[idx + 1]
+            return e
+
+    return None
+
+
+def select_atm_strike(expiry_data, spot):
+    strikes = [float(k) for k in expiry_data.keys() if k != "last_price"]
+    rounded_atm = round(spot / 100) * 100
+
+    candidate_strikes = sorted(
+        strikes,
+        key=lambda x: abs(x - rounded_atm)
+    )
+
+    MAX_SPREAD = 10
+
+    for strike in candidate_strikes:
+        sd = expiry_data.get(str(strike))
+        if not sd:
             continue
 
-        if exit_synthetic_long(system_id, state).get("exited"):
-            res = enter_synthetic_long(system_id, state["underlying"], state["qty"])
-            if res.get("entered"):
-                persist_system_state(system_id, res)
-                summary[system_id] = "ROLLED"
+        ce, pe = sd.get("ce"), sd.get("pe")
+        if not ce or not pe:
+            continue
 
-    return summary
+        ce_bid, ce_ask = float(ce["bestBidPrice"]), float(ce["bestAskPrice"])
+        pe_bid, pe_ask = float(pe["bestBidPrice"]), float(pe["bestAskPrice"])
+
+        if (ce_ask - ce_bid) <= MAX_SPREAD and (pe_ask - pe_bid) <= MAX_SPREAD:
+            return strike, ce["securityId"], pe["securityId"]
+
+    return None, None, None
+
+
+def enter_synthetic(system_id, expiry, spot, expiry_data, qty):
+    strike, call_sid, put_sid = select_atm_strike(expiry_data, spot)
+    if not strike:
+        log.error("[ENTER] No liquid ATM found")
+        return None
+
+    buy_call = place_order_with_checks("BUY", call_sid, qty, True)
+    if not buy_call.get("placed"):
+        return None
+
+    sell_put = place_order_with_checks("SELL", put_sid, qty, False)
+
+    return {
+        "expiry": expiry,
+        "strike": strike,
+        "call_security_id": call_sid,
+        "put_security_id": put_sid if sell_put.get("placed") else None,
+        "qty": qty,
+        "status": "OPEN"
+    }
+
+def exit_synthetic(system_id, state):
+    qty = state["qty"]
+    exited = False
+
+    if state.get("put_security_id") and broker_has_position(state["put_security_id"], qty):
+        place_order_with_checks("BUY", state["put_security_id"], qty, True)
+        exited = True
+
+    if broker_has_position(state["call_security_id"], qty):
+        place_order_with_checks("SELL", state["call_security_id"], qty, True)
+        exited = True
+
+    return exited
+
+def handle_rollover():
+    underlying_id = int(os.getenv("NIFTY_UNDERLYING_ID"))
+    expiries = get_option_expiries(underlying_id)
+    monthly = get_monthly_expiries(expiries)
+
+    if not is_monthly_expiry_today(monthly):
+        return
+
+    next_expiry = choose_entry_expiry(monthly)
+    if not next_expiry:
+        log.error("[ROLLOVER] No next monthly expiry")
+        return
+
+    for system_id, state in list(SYSTEM_POSITIONS.items()):
+        if date.fromisoformat(state["expiry"]) != date.today():
+            continue
+
+        if not exit_synthetic(system_id, state):
+            log.error(f"[ROLLOVER] Exit failed for {system_id}")
+            continue
+
+        spot, oc = fetch_option_chain_for_expiry(next_expiry)
+        if not spot or not oc:
+            log.error(f"[ROLLOVER] Failed to fetch chain for {system_id}")
+            continue
+
+        new_state = enter_synthetic(
+            system_id, next_expiry, spot, oc, state["qty"]
+        )
+
+        if new_state:
+            persist_system_state(system_id, new_state)
+        else:
+            log.error(f"[ROLLOVER] Re-entry failed for {system_id}")
+
 
 # ==================================================
 # WEBHOOK
@@ -356,28 +354,93 @@ def handle_rollover_if_needed():
 @app.route("/tv-webhook", methods=["POST"])
 def tv_webhook():
     data = request.json or {}
+
     signal = str(data.get("signal", "")).upper()
     system_id = data.get("system_id")
     underlying = data.get("underlying", "NIFTY")
-    qty = int(data.get("qty", 1))  # 🔴 START WITH 1 ONLY
+    qty = int(data.get("qty", 0))
 
+    # -------------------------------
+    # QTY VALIDATION
+    # -------------------------------
+    if qty <= 0 or qty % 75 != 0:
+        return jsonify({"error": "Invalid qty. Must be multiple of 75"}), 400
+
+    # -------------------------------
+    # ROLLOVER CHECK
+    # -------------------------------
     if signal == "CHECK":
-        return jsonify(handle_rollover_if_needed())
+        handle_rollover()
+        return jsonify({"status": "checked"}), 200
 
+    # -------------------------------
+    # BUY SIGNAL
+    # -------------------------------
     if signal == "BUY":
+
+        # 🔒 DUPLICATE POSITION PROTECTION
         if system_id in SYSTEM_POSITIONS:
-            return jsonify({"ignored": True})
-        res = enter_synthetic_long(system_id, underlying, qty)
-        if res.get("entered"):
-            persist_system_state(system_id, res)
-        return jsonify(res)
+            log.warning(f"[BUY][DUPLICATE] {system_id} already has open position")
+            return jsonify({"error": "Position already open"}), 409
 
+        uid = os.getenv("NIFTY_UNDERLYING_ID")
+        if not uid:
+            return jsonify({"error": "NIFTY_UNDERLYING_ID not set"}), 500
+
+        underlying_id = int(uid)
+
+        expiries = get_option_expiries(underlying_id)
+        monthly = get_monthly_expiries(expiries)
+
+        if not monthly:
+            return jsonify({"error": "No monthly expiries"}), 400
+
+        expiry = choose_entry_expiry(monthly)
+        if not expiry:
+            return jsonify({"error": "No valid entry expiry"}), 400
+
+        spot, expiry_data = fetch_option_chain_for_expiry(expiry)
+        if not spot or not expiry_data:
+            return jsonify({"error": "Option chain fetch failed"}), 500
+
+        state = enter_synthetic(
+            system_id, expiry, spot, expiry_data, qty
+        )
+
+        if state:
+            persist_system_state(system_id, state)
+            return jsonify({"status": "entered"}), 200
+
+        return jsonify({"error": "entry_failed"}), 400
+
+    # -------------------------------
+    # SELL / EXIT SIGNAL
+    # -------------------------------
     if signal in ("SELL", "EXIT"):
-        if system_id not in SYSTEM_POSITIONS:
-            return jsonify({"ignored": True})
-        return jsonify(exit_synthetic_long(system_id, SYSTEM_POSITIONS[system_id]))
+        log.info(f"[SIGNAL][EXIT] {system_id}")
 
-    return jsonify({"ignored": True})
+        if system_id not in SYSTEM_POSITIONS:
+            log.warning(f"[EXIT][IGNORED] {system_id} not found")
+            return jsonify({"status": "ignored"}), 200
+
+        state = SYSTEM_POSITIONS[system_id]
+
+        exited = exit_synthetic(system_id, state)
+
+        if exited:
+            remove_system_state(system_id)
+            log.info(f"[EXIT][SUCCESS] {system_id} closed and state cleared")
+            return jsonify({"status": "exited"}), 200
+
+        log.error(f"[EXIT][FAILED] {system_id} exit failed")
+        return jsonify({"status": "exit_failed"}), 500
+
+    # -------------------------------
+    # UNKNOWN SIGNAL
+    # -------------------------------
+    return jsonify({"status": "ignored"}), 200
+
+
 
 # ==================================================
 # HEALTH
