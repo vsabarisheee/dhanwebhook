@@ -153,51 +153,64 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
 # ==================================================
 def get_contract_for_new_long(today):
     """
-    Fetch ATM option contracts from Dhan Option Chain API.
+    REAL ATM option selector using Dhan Option Chain API
     """
     try:
-        # 1) Replace below with actual underlying security ID for NIFTY
-        underlying_security_id = 13
-        underlying_segment = "IDX_I"
+        # 🔴 IMPORTANT: Underlying securityId for NIFTY (INDEX)
+        # This must be correct. Commonly NIFTY = 13 in Dhan
+        UNDERLYING_SCRIP = 13
+        UNDERLYING_SEG = "IDX_I"
 
-        # 2) Get all expiries from the option chain API
-        body = {
-            "UnderlyingScrip": underlying_security_id,
-            "UnderlyingSeg": underlying_segment,
-            "Expiry": ""  # empty to get all expiries
+        payload = {
+            "UnderlyingScrip": UNDERLYING_SCRIP,
+            "UnderlyingSeg": UNDERLYING_SEG,
+            "Expiry": ""   # empty = all expiries
         }
 
         url = "https://api.dhan.co/v2/optionchain"
-        r = requests.post(url, headers=dhan_headers(), json=body, timeout=10)
+        headers = dhan_headers()
+
+        r = requests.post(url, headers=headers, json=payload, timeout=10)
         r.raise_for_status()
-        oc_data = r.json().get("data", {}).get("oc", {})
 
-        # 3) Find nearest monthly expiry
-        expiries = sorted({d for d in oc_data.keys()})
-        if not expiries:
+        data = r.json()
+        oc = data.get("data", {}).get("oc", {})
+
+        if not oc:
+            log.error("[CONTRACT] Empty option chain response")
             return None
-        selected_expiry = expiries[-1]  # latest expiry
 
-        # 4) Find ATM strike (closest to underlying spot)
-        underlying_last_price = oc_data[selected_expiry]["last_price"]
-        strike_prices = list(oc_data[selected_expiry].keys())
-        atm = min(
-            (float(s) for s in strike_prices if s not in ["last_price"]),
-            key=lambda s: abs(s - underlying_last_price),
-        )
+        # -----------------------------
+        # Pick MONTHLY expiry (last date)
+        # -----------------------------
+        expiries = sorted(oc.keys())
+        expiry = expiries[-1]
 
-        # 5) Build contract info
-        strike_data = oc_data[selected_expiry][str(atm)]
+        expiry_data = oc[expiry]
+        spot = float(expiry_data.get("last_price"))
+
+        # -----------------------------
+        # Pick ATM strike
+        # -----------------------------
+        strikes = [
+            float(k) for k in expiry_data.keys()
+            if k not in ("last_price",)
+        ]
+
+        atm_strike = min(strikes, key=lambda x: abs(x - spot))
+        strike_data = expiry_data[str(atm_strike)]
+
         return {
-            "expiry": date.fromisoformat(selected_expiry),
-            "strike": atm,
+            "expiry": date.fromisoformat(expiry),
+            "strike": atm_strike,
             "call_security_id": strike_data["ce"]["securityId"],
-            "put_security_id":  strike_data["pe"]["securityId"],
+            "put_security_id": strike_data["pe"]["securityId"]
         }
 
     except Exception as e:
         log.error(f"[CONTRACT][ERROR] {e}")
         return None
+
 
 
 # ==================================================
