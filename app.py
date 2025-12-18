@@ -185,10 +185,16 @@ def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
 # ==================================================
 def get_contract_for_new_long(today):
     try:
-        underlying_id = int(os.getenv("NIFTY_UNDERLYING_ID"))
+        uid = os.getenv("NIFTY_UNDERLYING_ID")
+        if not uid:
+            log.error("[CONFIG] NIFTY_UNDERLYING_ID not set")
+            return None
+
+        underlying_id = int(uid)
 
         expiries = get_option_expiries(underlying_id)
         if not expiries:
+            log.error("[CONTRACT] No expiries returned")
             return None
 
         expiry_str = expiries[0]
@@ -200,98 +206,72 @@ def get_contract_for_new_long(today):
             "Expiry": expiry_str
         }
 
-        # option-chain API call
-        # ATM strike selection
-        # return contract dict
-
-
-        url = "https://api.dhan.co/v2/optionchain"
-        headers = dhan_headers()
-
-        r = requests.post(url, headers=headers, json=payload, timeout=10)
+        r = requests.post(
+            "https://api.dhan.co/v2/optionchain",
+            headers=dhan_headers(),
+            json=payload,
+            timeout=10
+        )
         r.raise_for_status()
 
-        data = r.json()
-        oc = data.get("data", {}).get("oc", {})
-
-        if not oc:
-            log.error("[CONTRACT] Empty option chain response")
+        oc = r.json().get("data", {}).get("oc", {})
+        if expiry_str not in oc:
+            log.error("[CONTRACT] Expiry not found in option chain")
             return None
 
-        # -----------------------------
-        # Pick MONTHLY expiry (last date)
-        # -----------------------------
-        expiries = sorted(oc.keys())
-        expiry = expiries[-1]
+        expiry_data = oc[expiry_str]
+        spot = float(expiry_data["last_price"])
 
-        expiry_data = oc[expiry]
-        spot = float(expiry_data.get("last_price"))
-
-        # -----------------------------
-        # Pick ATM strike
-        # -----------------------------
         strikes = [
             float(k) for k in expiry_data.keys()
-            if k not in ("last_price",)
+            if k != "last_price"
         ]
 
-        # --------------------------------------------------
-# ATM STRIKE SELECTION (NEAREST 100)
-# --------------------------------------------------
-rounded_atm = round(spot / 100) * 100
+        # -----------------------------
+        # ATM + SPREAD LOGIC (INSIDE try)
+        # -----------------------------
+        rounded_atm = round(spot / 100) * 100
 
-candidate_strikes = sorted(
-    strikes,
-    key=lambda x: abs(x - rounded_atm)
-)
+        candidate_strikes = sorted(
+            strikes,
+            key=lambda x: abs(x - rounded_atm)
+        )
 
-selected_strike = None
-selected_data = None
+        MAX_SPREAD = 20
 
-MAX_SPREAD = 20   # points, tune if needed
+        for strike in candidate_strikes:
+            sd = expiry_data.get(str(strike))
+            if not sd:
+                continue
 
-for strike in candidate_strikes:
-    sd = expiry_data.get(str(strike))
-    if not sd:
-        continue
+            ce = sd.get("ce")
+            pe = sd.get("pe")
+            if not ce or not pe:
+                continue
 
-    ce = sd.get("ce")
-    pe = sd.get("pe")
-    if not ce or not pe:
-        continue
+            ce_bid = float(ce.get("bestBidPrice", 0))
+            ce_ask = float(ce.get("bestAskPrice", 0))
+            pe_bid = float(pe.get("bestBidPrice", 0))
+            pe_ask = float(pe.get("bestAskPrice", 0))
 
-    ce_bid = float(ce.get("bestBidPrice", 0))
-    ce_ask = float(ce.get("bestAskPrice", 0))
-    pe_bid = float(pe.get("bestBidPrice", 0))
-    pe_ask = float(pe.get("bestAskPrice", 0))
+            if ce_bid <= 0 or pe_bid <= 0:
+                continue
 
-    if ce_bid <= 0 or ce_ask <= 0 or pe_bid <= 0 or pe_ask <= 0:
-        continue
+            if (ce_ask - ce_bid) <= MAX_SPREAD and (pe_ask - pe_bid) <= MAX_SPREAD:
+                return {
+                    "expiry": expiry_date,
+                    "strike": strike,
+                    "call_security_id": ce["securityId"],
+                    "put_security_id": pe["securityId"]
+                }
 
-    ce_spread = ce_ask - ce_bid
-    pe_spread = pe_ask - pe_bid
-
-    if ce_spread <= MAX_SPREAD and pe_spread <= MAX_SPREAD:
-        selected_strike = strike
-        selected_data = sd
-        break
-
-if not selected_data:
-    log.error("[CONTRACT] No liquid ATM strike found")
-    return None
-
-
-        return {
-            "expiry": expiry_date,
-            "strike": selected_strike,
-            "call_security_id": selected_data["ce"]["securityId"],
-            "put_security_id": selected_data["pe"]["securityId"]
-        }
-
+        log.error("[CONTRACT] No liquid ATM strike found")
+        return None
 
     except Exception as e:
         log.error(f"[CONTRACT][ERROR] {e}")
         return None
+
 
 
 
