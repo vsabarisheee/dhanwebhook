@@ -71,6 +71,25 @@ def remove_system_state(system_id):
         log.info(f"[STATE] Removed {system_id}")
 
 # ==================================================
+# BROKER POSITION CHECK
+# ==================================================
+def broker_has_position(security_id, required_qty):
+    """
+    Returns True if broker net position qty >= required_qty
+    """
+    try:
+        positions = get_broker_positions()  # Dhan positions API
+        for p in positions:
+            if str(p.get("securityId")) == str(security_id):
+                net_qty = abs(int(p.get("netQty", 0)))
+                return net_qty >= required_qty
+        return False
+    except Exception as e:
+        log.error(f"[BROKER][CHECK] Failed for SID={security_id}: {e}")
+        return False
+
+
+# ==================================================
 # LOAD STATE ON START
 # ==================================================
 SYSTEM_POSITIONS = load_system_positions()
@@ -223,75 +242,78 @@ def exit_synthetic_long(system_id, state):
             log.warning(f"[EXIT][INVALID] Missing qty or call SID for {system_id}")
             return {"exited": False, "reason": "invalid_state"}
 
+        exited_any_leg = False
+
         # --------------------------------------------------
-        # 1️⃣ EXIT PUT first (if exists)
+        # 1️⃣ EXIT PUT FIRST (if exists)
         # --------------------------------------------------
         if put_sid:
-            log.info(f"[EXIT][PUT] BUY PUT {put_sid} qty={qty}")
+            if broker_has_position(put_sid, qty):
+                log.info(f"[EXIT][PUT] BUY PUT {put_sid} qty={qty}")
 
-            buy_put = place_order_with_checks(
-                side="BUY",
-                security_id=put_sid,
+                buy_put = place_order_with_checks(
+                    side="BUY",
+                    security_id=put_sid,
+                    qty=qty,
+                    t0=t0,
+                    ensure_fill=True
+                )
+
+                if not buy_put.get("placed") or not buy_put.get("filled_completely"):
+                    log.error(f"[EXIT][FAILED] BUY PUT failed for {system_id}")
+                    return {"exited": False, "reason": "buy_put_failed"}
+
+                exited_any_leg = True
+                log.info(f"[EXIT][PUT] PUT exited successfully")
+            else:
+                log.warning(
+                    f"[EXIT][PUT][SKIP] No broker PUT position "
+                    f"SID={put_sid} qty={qty} system={system_id}"
+                )
+        else:
+            log.info(f"[EXIT][PUT] No PUT leg for {system_id} (partial position)")
+
+        # --------------------------------------------------
+        # 2️⃣ EXIT CALL
+        # --------------------------------------------------
+        if broker_has_position(call_sid, qty):
+            log.info(f"[EXIT][CALL] SELL CALL {call_sid} qty={qty}")
+
+            sell_call = place_order_with_checks(
+                side="SELL",
+                security_id=call_sid,
                 qty=qty,
                 t0=t0,
                 ensure_fill=True
             )
 
-            if not buy_put.get("placed") or not buy_put.get("filled_completely"):
-                log.error(f"[EXIT][FAILED] BUY PUT failed for {system_id}")
-                return {
-                    "exited": False,
-                    "reason": "buy_put_failed",
-                    "details": buy_put,
-                }
+            if not sell_call.get("placed") or not sell_call.get("filled_completely"):
+                log.error(f"[EXIT][FAILED] SELL CALL failed for {system_id}")
+                return {"exited": False, "reason": "sell_call_failed"}
 
-            log.info(f"[EXIT][PUT] PUT exited successfully")
+            exited_any_leg = True
+            log.info(f"[EXIT][CALL] CALL exited successfully")
         else:
-            log.warning(f"[EXIT][PUT] No PUT leg for {system_id} (partial position)")
+            log.warning(
+                f"[EXIT][CALL][SKIP] No broker CALL position "
+                f"SID={call_sid} qty={qty} system={system_id}"
+            )
 
         # --------------------------------------------------
-        # 2️⃣ EXIT CALL
+        # 3️⃣ FINALIZE (REMOVE STATE ONLY IF SAFE)
         # --------------------------------------------------
-        log.info(f"[EXIT][CALL] SELL CALL {call_sid} qty={qty}")
+        if exited_any_leg:
+            remove_system_state(system_id)
+            log.info(f"[EXIT][SUCCESS] system_id={system_id} closed safely")
+            return {"exited": True,"system_id": system_id,"qty": qty}
 
-        sell_call = place_order_with_checks(
-            side="SELL",
-            security_id=call_sid,
-            qty=qty,
-            t0=t0,
-            ensure_fill=True
-        )
-
-        if not sell_call.get("placed") or not sell_call.get("filled_completely"):
-            log.error(f"[EXIT][FAILED] SELL CALL failed for {system_id}")
-            return {
-                "exited": False,
-                "reason": "sell_call_failed",
-                "details": sell_call,
-            }
-
-        log.info(f"[EXIT][CALL] CALL exited successfully")
-
-        # --------------------------------------------------
-        # 3️⃣ SUCCESS → REMOVE STATE
-        # --------------------------------------------------
-        remove_system_state(system_id)
-
-        log.info(f"[EXIT][SUCCESS] system_id={system_id} fully exited")
-
-        return {
-            "exited": True,
-            "system_id": system_id,
-            "qty": qty
-        }
-
-    except Exception as e:
-        log.exception(f"[EXIT][CRITICAL] Exception during EXIT: {e}")
+        log.warning(f"[EXIT][NO_ACTION] Nothing exited for {system_id}")
         return {
             "exited": False,
-            "reason": "exception",
-            "error": str(e),
+            "reason": "no_broker_position"
         }
+
+
 
 
 def handle_rollover_if_needed():
@@ -385,7 +407,15 @@ def handle_rollover_if_needed():
     return rollover_summary
 
 
-
+# ==================================================
+# ROLLOVER CHECK (SAFE PLACEHOLDER)
+# ==================================================
+def rollover_check(now_utc):
+    now_ist = now_utc + timedelta(hours=5, minutes=30)
+    if now_ist.time() < dtime(12, 30):
+        return None
+    log.info("[ROLLOVER] Time gate passed")
+    return None
 
 # ==================================================
 # WEBHOOK
@@ -404,7 +434,7 @@ def tv_webhook():
     if raw_signal in ("BUY", "SELL", "EXIT") and not system_id:
         return jsonify({"error": "system_id required"}), 400
 
-
+    rollover_check(datetime.utcnow())
 
     # ---------------- CHECK ----------------
     if raw_signal == "CHECK":
@@ -431,7 +461,7 @@ def tv_webhook():
             "expiry": res["expiry"],
             "strike": res["strike"],
             "call_security_id": res["call_security_id"],
-            "put_security_id": res.get("put_security_id"),
+            "put_security_id": res["put_security_id"],
             "entry_time": datetime.utcnow().isoformat(),
             "status": "OPEN",
         }
@@ -451,7 +481,8 @@ def tv_webhook():
         state = SYSTEM_POSITIONS[system_id]
         res = exit_synthetic_long(system_id, state)
 
-
+        if res.get("exited"):
+            remove_system_state(system_id)
 
         return jsonify({"status": "ok"}), 200
 
