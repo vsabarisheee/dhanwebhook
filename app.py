@@ -73,6 +73,14 @@ def remove_system_state(system_id):
 # ==================================================
 # BROKER POSITION CHECK
 # ==================================================
+
+def get_broker_positions():
+    """
+    TEMPORARY STUB.
+    Replace with actual Dhan Positions API implementation.
+    """
+    return []
+
 def broker_has_position(security_id, required_qty):
     """
     Returns True if broker net position qty >= required_qty
@@ -410,16 +418,6 @@ def handle_rollover_if_needed():
 
 
 # ==================================================
-# ROLLOVER CHECK (SAFE PLACEHOLDER)
-# ==================================================
-def rollover_check(now_utc):
-    now_ist = now_utc + timedelta(hours=5, minutes=30)
-    if now_ist.time() < dtime(12, 30):
-        return None
-    log.info("[ROLLOVER] Time gate passed")
-    return None
-
-# ==================================================
 # WEBHOOK
 # ==================================================
 @app.route("/tv-webhook", methods=["POST"])
@@ -436,7 +434,6 @@ def tv_webhook():
     if raw_signal in ("BUY", "SELL", "EXIT") and not system_id:
         return jsonify({"error": "system_id required"}), 400
 
-    rollover_check(datetime.utcnow())
 
     # ---------------- CHECK ----------------
     if raw_signal == "CHECK":
@@ -481,14 +478,9 @@ def tv_webhook():
             return jsonify({"status": "ignored"}), 200
 
         state = SYSTEM_POSITIONS[system_id]
-        res = exit_synthetic_long(system_id, state)
-
-        if res.get("exited"):
-            remove_system_state(system_id)
-
+        exit_synthetic_long(system_id, state)
+        
         return jsonify({"status": "ok"}), 200
-
-    return jsonify({"status": "ignored"}), 400
 
 # ==================================================
 # ADMIN & HEALTH
