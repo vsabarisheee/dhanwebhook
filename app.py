@@ -66,48 +66,6 @@ def dhan_headers():
     }
 
 # ==================================================
-# DISCOVER NIFTY UNDERLYING SECURITY ID (ONE TIME)
-# ==================================================
-def get_nifty_underlying_security_id():
-    """
-    Fetch NIFTY index securityId using Dhan Market Quote API
-    """
-    try:
-        payload = {
-            "NSE_IDX": [
-                {
-                    "symbol": "NIFTY 50",
-                    "exchange": "NSE"
-                }
-            ]
-        }
-
-        url = "https://api.dhan.co/v2/marketfeed/quote"
-        r = requests.post(
-            url,
-            headers=dhan_headers(),
-            json=payload,
-            timeout=10
-        )
-        r.raise_for_status()
-
-        data = r.json()
-        nifty = data.get("data", {}).get("NSE_IDX", [])
-
-        if not nifty:
-            log.error("[NIFTY][ID] No data returned")
-            return None
-
-        security_id = nifty[0].get("securityId")
-        log.info(f"[NIFTY][ID] securityId={security_id}")
-        return security_id
-
-    except Exception as e:
-        log.error(f"[NIFTY][ID][ERROR] {e}")
-        return None
-
-
-# ==================================================
 # BROKER POSITIONS (REAL)
 # ==================================================
 def get_broker_positions():
@@ -189,25 +147,63 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
         log.error(f"[ORDER][ERROR] {e}")
         return {"placed": False}
 
+# ==================================================
+# OPTION EXPIRY LIST (OFFICIAL DHAN API)
+# ==================================================
+def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
+    """
+    Fetch list of valid expiries for the underlying from Dhan
+    """
+    try:
+        payload = {
+            "UnderlyingScrip": int(underlying_id),
+            "UnderlyingSeg": underlying_seg
+        }
+
+        url = "https://api.dhan.co/v2/optionchain/expirylist"
+        r = requests.post(
+            url,
+            headers=dhan_headers(),
+            json=payload,
+            timeout=10
+        )
+        r.raise_for_status()
+
+        data = r.json()
+        expiries = data.get("data", {}).get("expiryList", [])
+
+        log.info(f"[EXPIRY][LIST] {expiries}")
+        return expiries
+
+    except Exception as e:
+        log.error(f"[EXPIRY][ERROR] {e}")
+        return []
+
 
 # ==================================================
 # ATM OPTION SELECTION (REAL)
 # ==================================================
 def get_contract_for_new_long(today):
-    """
-    REAL ATM option selector using Dhan Option Chain API
-    """
     try:
-        # 🔴 IMPORTANT: Underlying securityId for NIFTY (INDEX)
-        # This must be correct. Commonly NIFTY = 13 in Dhan
-        UNDERLYING_SCRIP = 13
-        UNDERLYING_SEG = "IDX_I"
+        underlying_id = int(os.getenv("NIFTY_UNDERLYING_ID"))
+
+        expiries = get_option_expiries(underlying_id)
+        if not expiries:
+            return None
+
+        expiry_str = expiries[0]
+        expiry_date = date.fromisoformat(expiry_str)
 
         payload = {
-            "UnderlyingScrip": UNDERLYING_SCRIP,
-            "UnderlyingSeg": UNDERLYING_SEG,
-            "Expiry": ""   # empty = all expiries
+            "UnderlyingScrip": underlying_id,
+            "UnderlyingSeg": "IDX_I",
+            "Expiry": expiry_str
         }
+
+        # option-chain API call
+        # ATM strike selection
+        # return contract dict
+
 
         url = "https://api.dhan.co/v2/optionchain"
         headers = dhan_headers()
@@ -341,7 +337,6 @@ def tv_webhook():
         return jsonify(handle_rollover_if_needed())
 
     if signal == "BUY":
-        get_nifty_underlying_security_id()
         if system_id in SYSTEM_POSITIONS:
             return jsonify({"ignored": True})
         res = enter_synthetic_long(system_id, underlying, qty)
