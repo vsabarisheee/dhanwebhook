@@ -108,23 +108,22 @@ def get_order_status(order_id):
 def place_order_with_checks(side, security_id, qty, ensure_fill=True):
     try:
         payload = {
-            "transactionType": side,       # BUY / SELL
+            "transactionType": side,
             "exchangeSegment": "NSE_FNO",
-            "productType": "INTRADAY",
+            "productType": "NRML",
             "orderType": "MARKET",
             "validity": "DAY",
             "securityId": str(security_id),
-            "quantity": int(qty),
-            "price": 0,
+            "quantity": qty,
             "disclosedQuantity": 0,
+            "price": 0,
+            "triggerPrice": "",
             "afterMarketOrder": False
         }
 
         r = requests.post(
             "https://api.dhan.co/v2/orders",
-            headers=dhan_headers(),
-            json=payload,
-            timeout=10
+            headers=dhan_headers(), json=payload
         )
         r.raise_for_status()
         order_id = r.json().get("orderId")
@@ -133,6 +132,7 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             return {"placed": False}
 
         if ensure_fill:
+            # poll until TRADED OR TIMEOUT
             for _ in range(5):
                 time.sleep(1)
                 status = get_order_status(order_id)
@@ -140,48 +140,65 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
                     return {"placed": True, "filled_completely": True}
                 if status in ("REJECTED", "CANCELLED"):
                     return {"placed": False}
-
             return {"placed": False}
-
         return {"placed": True, "filled_completely": False}
 
     except Exception as e:
         log.error(f"[ORDER][ERROR] {e}")
         return {"placed": False}
 
+
 # ==================================================
 # ATM OPTION SELECTION (REAL)
 # ==================================================
 def get_contract_for_new_long(today):
+    """
+    Fetch ATM option contracts from Dhan Option Chain API.
+    """
     try:
-        r = requests.get(
-            "https://api.dhan.co/v2/option-chain",
-            headers=dhan_headers(),
-            params={"symbol": "NIFTY", "exchangeSegment": "NSE_FNO"},
-            timeout=10
-        )
+        # 1) Replace below with actual underlying security ID for NIFTY
+        underlying_security_id = 13
+        underlying_segment = "IDX_I"
+
+        # 2) Get all expiries from the option chain API
+        body = {
+            "UnderlyingScrip": underlying_security_id,
+            "UnderlyingSeg": underlying_segment,
+            "Expiry": ""  # empty to get all expiries
+        }
+
+        url = "https://api.dhan.co/v2/optionchain"
+        r = requests.post(url, headers=dhan_headers(), json=body, timeout=10)
         r.raise_for_status()
-        chain = r.json()
+        oc_data = r.json().get("data", {}).get("oc", {})
 
-        spot = float(chain["underlyingValue"])
-        strikes = chain["data"]
+        # 3) Find nearest monthly expiry
+        expiries = sorted({d for d in oc_data.keys()})
+        if not expiries:
+            return None
+        selected_expiry = expiries[-1]  # latest expiry
 
-        atm_strike = min(strikes, key=lambda x: abs(x["strikePrice"] - spot))["strikePrice"]
-        monthly_expiry = max({s["expiryDate"] for s in strikes})
+        # 4) Find ATM strike (closest to underlying spot)
+        underlying_last_price = oc_data[selected_expiry]["last_price"]
+        strike_prices = list(oc_data[selected_expiry].keys())
+        atm = min(
+            (float(s) for s in strike_prices if s not in ["last_price"]),
+            key=lambda s: abs(s - underlying_last_price),
+        )
 
-        for s in strikes:
-            if s["strikePrice"] == atm_strike and s["expiryDate"] == monthly_expiry:
-                return {
-                    "expiry": date.fromisoformat(monthly_expiry),
-                    "strike": atm_strike,
-                    "call_security_id": s["CE"]["securityId"],
-                    "put_security_id": s["PE"]["securityId"]
-                }
+        # 5) Build contract info
+        strike_data = oc_data[selected_expiry][str(atm)]
+        return {
+            "expiry": date.fromisoformat(selected_expiry),
+            "strike": atm,
+            "call_security_id": strike_data["ce"]["securityId"],
+            "put_security_id":  strike_data["pe"]["securityId"],
+        }
 
-        return None
     except Exception as e:
         log.error(f"[CONTRACT][ERROR] {e}")
         return None
+
 
 # ==================================================
 # ENTER SYNTHETIC LONG
