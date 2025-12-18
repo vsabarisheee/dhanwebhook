@@ -196,56 +196,33 @@ def fetch_option_chain_for_expiry(expiry_str):
         "Expiry": expiry_str
     }
 
-    r = requests.post(
-        "https://api.dhan.co/v2/optionchain",
-        headers=dhan_headers(),
-        json=payload,
-        timeout=10
-    )
-    r.raise_for_status()
+    try:
+        r = requests.post(
+            "https://api.dhan.co/v2/optionchain",
+            headers=dhan_headers(),
+            json=payload,
+            timeout=10
+        )
+        r.raise_for_status()
 
-    oc = r.json().get("data", {}).get("oc", {})
-    if expiry_str not in oc:
-        log.error("[CHAIN] Expiry not found in option chain")
+        data = r.json().get("data", {})
+        oc = data.get("oc")
+
+        if not isinstance(oc, dict) or not oc:
+            log.error(f"[CHAIN] Empty option chain for expiry {expiry_str}")
+            return None, None
+
+        spot = float(data.get("last_price", 0))
+        if spot <= 0:
+            log.error("[CHAIN] Invalid spot price")
+            return None, None
+
+        return spot, oc
+
+    except Exception as e:
+        log.error(f"[CHAIN][ERROR] {e}")
         return None, None
 
-    expiry_data = oc[expiry_str]
-    spot = float(expiry_data["last_price"])
-    return spot, expiry_data
-
-
-def get_monthly_expiries(expiries):
-    """
-    Filters only MONTHLY expiries (last expiry of each month)
-    """
-    monthly = {}
-    for e in expiries:
-        d = date.fromisoformat(e)
-        key = (d.year, d.month)
-        monthly[key] = e  # last one wins
-
-    return sorted(monthly.values())
-
-def is_monthly_expiry_today(monthly_expiries):
-    today = date.today().isoformat()
-    return today in monthly_expiries
-
-def choose_entry_expiry(monthly_expiries):
-    """
-    If today is expiry → use next month
-    Else → use current month
-    """
-    today = date.today()
-
-    for e in monthly_expiries:
-        d = date.fromisoformat(e)
-        if d >= today:
-            if d == today:
-                idx = monthly_expiries.index(e)
-                return monthly_expiries[idx + 1]
-            return e
-
-    return None
 
 
 def select_atm_strike(expiry_data, spot):
