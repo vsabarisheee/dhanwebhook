@@ -4,13 +4,8 @@ import os
 import time
 import json
 import tempfile
-import struct
-import csv
-import math
 import logging
-from datetime import date, datetime, timedelta, time as dtime
-from websocket import WebSocketTimeoutException
-import websocket
+from datetime import datetime, date, timedelta, time as dtime
 
 # ==================================================
 # LOGGING
@@ -19,7 +14,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
 )
-log = logging.getLogger("TRADE_ENGINE")
+log = logging.getLogger("DHAN_ENGINE")
 
 # ==================================================
 # APP & STATE
@@ -34,35 +29,23 @@ SYSTEM_POSITIONS = {}
 # ==================================================
 def load_system_positions():
     if not os.path.exists(STATE_FILE):
-        log.info("[STATE] No existing state file. Fresh start.")
         return {}
-
     try:
         with open(STATE_FILE, "r") as f:
-            data = json.load(f)
-            log.info(f"[STATE] Loaded systems: {list(data.keys())}")
-            return data
-    except Exception as e:
-        log.error(f"[STATE] Failed to load state: {e}")
+            return json.load(f)
+    except Exception:
         return {}
 
-
 def save_system_positions(state):
-    try:
-        fd, tmp = tempfile.mkstemp()
-        with os.fdopen(fd, "w") as f:
-            json.dump(state, f, indent=2)
-        os.replace(tmp, STATE_FILE)
-        log.info(f"[STATE] Saved systems: {list(state.keys())}")
-    except Exception as e:
-        log.error(f"[STATE] Failed to save state: {e}")
-
+    fd, tmp = tempfile.mkstemp()
+    with os.fdopen(fd, "w") as f:
+        json.dump(state, f, indent=2)
+    os.replace(tmp, STATE_FILE)
 
 def persist_system_state(system_id, state):
     SYSTEM_POSITIONS[system_id] = state
     save_system_positions(SYSTEM_POSITIONS)
     log.info(f"[STATE] Persisted {system_id}")
-
 
 def remove_system_state(system_id):
     if system_id in SYSTEM_POSITIONS:
@@ -70,441 +53,246 @@ def remove_system_state(system_id):
         save_system_positions(SYSTEM_POSITIONS)
         log.info(f"[STATE] Removed {system_id}")
 
-# ==================================================
-# BROKER POSITION CHECK
-# ==================================================
-
-def get_broker_positions():
-    """
-    TEMPORARY STUB.
-    Replace with actual Dhan Positions API implementation.
-    """
-    return []
-
-def broker_has_position(security_id, required_qty):
-    """
-    Returns True if broker net position qty >= required_qty
-    """
-    try:
-        positions = get_broker_positions()  # Dhan positions API
-        for p in positions:
-            if str(p.get("securityId")) == str(security_id):
-                net_qty = abs(int(p.get("netQty", 0)))
-                return net_qty >= required_qty
-        return False
-    except Exception as e:
-        log.error(f"[BROKER][CHECK] Failed for SID={security_id}: {e}")
-        return False
-
-
-# ==================================================
-# LOAD STATE ON START
-# ==================================================
 SYSTEM_POSITIONS = load_system_positions()
 
 # ==================================================
-# PLACEHOLDER – ORDER EXECUTION
-# (You will plug your existing Dhan logic here)
+# DHAN AUTH HELPERS
+# ==================================================
+def dhan_headers():
+    return {
+        "access-token": os.getenv("DHAN_ACCESS_TOKEN"),
+        "client-id": os.getenv("DHAN_CLIENT_ID"),
+        "Content-Type": "application/json"
+    }
+
+# ==================================================
+# BROKER POSITIONS (REAL)
+# ==================================================
+def get_broker_positions():
+    try:
+        r = requests.get(
+            "https://api.dhan.co/v2/positions",
+            headers=dhan_headers(),
+            timeout=10
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        log.error(f"[BROKER][POSITIONS] {e}")
+        return []
+
+def broker_has_position(security_id, qty):
+    for p in get_broker_positions():
+        if str(p.get("securityId")) == str(security_id):
+            return abs(int(p.get("netQty", 0))) >= qty
+    return False
+
+# ==================================================
+# ORDER STATUS (REAL)
+# ==================================================
+def get_order_status(order_id):
+    try:
+        r = requests.get(
+            f"https://api.dhan.co/v2/orders/{order_id}",
+            headers=dhan_headers(),
+            timeout=5
+        )
+        r.raise_for_status()
+        return r.json().get("orderStatus")
+    except Exception:
+        return None
+
+# ==================================================
+# ORDER PLACEMENT (REAL)
+# ==================================================
+def place_order_with_checks(side, security_id, qty, ensure_fill=True):
+    try:
+        payload = {
+            "transactionType": side,       # BUY / SELL
+            "exchangeSegment": "NSE_FNO",
+            "productType": "INTRADAY",
+            "orderType": "MARKET",
+            "validity": "DAY",
+            "securityId": str(security_id),
+            "quantity": int(qty),
+            "price": 0,
+            "disclosedQuantity": 0,
+            "afterMarketOrder": False
+        }
+
+        r = requests.post(
+            "https://api.dhan.co/v2/orders",
+            headers=dhan_headers(),
+            json=payload,
+            timeout=10
+        )
+        r.raise_for_status()
+        order_id = r.json().get("orderId")
+
+        if not order_id:
+            return {"placed": False}
+
+        if ensure_fill:
+            for _ in range(5):
+                time.sleep(1)
+                status = get_order_status(order_id)
+                if status == "TRADED":
+                    return {"placed": True, "filled_completely": True}
+                if status in ("REJECTED", "CANCELLED"):
+                    return {"placed": False}
+
+            return {"placed": False}
+
+        return {"placed": True, "filled_completely": False}
+
+    except Exception as e:
+        log.error(f"[ORDER][ERROR] {e}")
+        return {"placed": False}
+
+# ==================================================
+# ATM OPTION SELECTION (REAL)
+# ==================================================
+def get_contract_for_new_long(today):
+    try:
+        r = requests.get(
+            "https://api.dhan.co/v2/option-chain",
+            headers=dhan_headers(),
+            params={"symbol": "NIFTY", "exchangeSegment": "NSE_FNO"},
+            timeout=10
+        )
+        r.raise_for_status()
+        chain = r.json()
+
+        spot = float(chain["underlyingValue"])
+        strikes = chain["data"]
+
+        atm_strike = min(strikes, key=lambda x: abs(x["strikePrice"] - spot))["strikePrice"]
+        monthly_expiry = max({s["expiryDate"] for s in strikes})
+
+        for s in strikes:
+            if s["strikePrice"] == atm_strike and s["expiryDate"] == monthly_expiry:
+                return {
+                    "expiry": date.fromisoformat(monthly_expiry),
+                    "strike": atm_strike,
+                    "call_security_id": s["CE"]["securityId"],
+                    "put_security_id": s["PE"]["securityId"]
+                }
+
+        return None
+    except Exception as e:
+        log.error(f"[CONTRACT][ERROR] {e}")
+        return None
+
+# ==================================================
+# ENTER SYNTHETIC LONG
 # ==================================================
 def enter_synthetic_long(system_id, underlying, qty):
-    """
-    Places a synthetic future:
-      BUY ATM CALL
-      SELL ATM PUT
+    contract = get_contract_for_new_long(date.today())
+    if not contract:
+        return {"entered": False}
 
-    Returns dict with:
-      entered: bool
-      expiry
-      strike
-      call_security_id
-      put_security_id
-    """
+    buy_call = place_order_with_checks("BUY", contract["call_security_id"], qty, True)
+    if not buy_call.get("placed"):
+        return {"entered": False}
 
-    t0 = time.time()
-    log.info(f"[BUY][START] system_id={system_id} underlying={underlying} qty={qty}")
+    sell_put = place_order_with_checks("SELL", contract["put_security_id"], qty, False)
 
-    try:
-        # --------------------------------------------------
-        # 1️⃣ Decide contract (near / next expiry)
-        # --------------------------------------------------
-        today = datetime.utcnow().date()
-        contract = get_contract_for_new_long(today)
+    return {
+        "entered": True,
+        "underlying": underlying,
+        "expiry": contract["expiry"].isoformat(),
+        "strike": contract["strike"],
+        "call_security_id": contract["call_security_id"],
+        "put_security_id": contract["put_security_id"] if sell_put.get("placed") else None,
+        "qty": qty,
+    }
 
-        if not contract:
-            log.error("[BUY][ERROR] No contract available")
-            return {"entered": False, "reason": "no_contract"}
-
-        contract = ensure_contract_populated(contract)
-
-        expiry = contract["expiry"]
-        strike = contract["strike"]
-        call_sid = contract["call_security_id"]
-        put_sid = contract["put_security_id"]
-
-        log.info(
-            f"[BUY][CONTRACT] expiry={expiry} strike={strike} "
-            f"CE={call_sid} PE={put_sid}"
-        )
-
-        # --------------------------------------------------
-        # 2️⃣ BUY CALL (must succeed)
-        # --------------------------------------------------
-        buy_call = place_order_with_checks(
-            side="BUY",
-            security_id=call_sid,
-            qty=qty,
-            t0=t0,
-            ensure_fill=True
-        )
-
-        if not buy_call.get("placed") or not buy_call.get("filled_completely"):
-            log.error("[BUY][FAILED] BUY CALL leg failed")
-            return {
-                "entered": False,
-                "reason": "buy_call_failed",
-                "details": buy_call,
-            }
-
-        log.info("[BUY][CALL] BUY CALL successful")
-        
-        # --------------------------------------------------
-        # 3️⃣ SELL PUT (best effort)
-        # --------------------------------------------------
-        sell_put = place_order_with_checks(
-            side="SELL",
-            security_id=put_sid,
-            qty=qty,
-            t0=t0,
-            ensure_fill=False
-        )
-
-        if not sell_put.get("placed"):
-            log.error("[BUY][CRITICAL] BUY CALL filled but SELL PUT failed")
-            log.error("[BUY][MANUAL] Naked CALL position exists – intervention required")
-        
-            # IMPORTANT:
-            # BUY CALL already created broker exposure
-            # We MUST mark this system as OPEN in state
-            return {
-                "entered": True,            # ← THIS IS THE KEY CHANGE
-                "partial": True,
-                "underlying": underlying,
-                "expiry": expiry.isoformat(),
-                "strike": strike,
-                "call_security_id": call_sid,
-                "put_security_id": None,    # PUT leg missing
-                "qty": qty,
-                "warning": "SELL_PUT_FAILED"
-            }
-
-            
-        log.info("[BUY][PUT] SELL PUT placed")
-
-        # --------------------------------------------------
-        # 4️⃣ SUCCESS
-        # --------------------------------------------------
-        log.info(
-            f"[BUY][SUCCESS] system_id={system_id} "
-            f"expiry={expiry} strike={strike}"
-        )
-
-        return {
-            "entered": True,
-            "underlying": underlying,
-            "expiry": expiry.isoformat(),
-            "strike": strike,
-            "call_security_id": call_sid,
-            "put_security_id": put_sid,
-            "qty": qty,
-        }
-
-    except Exception as e:
-        log.exception(f"[BUY][CRITICAL] Exception during BUY: {e}")
-        return {
-            "entered": False,
-            "reason": "exception",
-            "error": str(e),
-        }
-
-
-
+# ==================================================
+# EXIT SYNTHETIC LONG
+# ==================================================
 def exit_synthetic_long(system_id, state):
-    """
-    Exit synthetic long based on JSON state.
-    Handles:
-      - Full synthetic (CALL + PUT)
-      - Partial synthetic (CALL only)
-    Exit order:
-      BUY PUT first, then SELL CALL
-    """
+    qty = state["qty"]
+    call_sid = state["call_security_id"]
+    put_sid = state.get("put_security_id")
 
-    t0 = time.time()
-    log.info(f"[EXIT][START] system_id={system_id}")
+    exited = False
 
-    try:
-        qty = int(state.get("qty", 0))
-        call_sid = state.get("call_security_id")
-        put_sid = state.get("put_security_id")
+    if put_sid and broker_has_position(put_sid, qty):
+        place_order_with_checks("BUY", put_sid, qty, True)
+        exited = True
 
-        if qty <= 0 or not call_sid:
-            log.warning(f"[EXIT][INVALID] Missing qty or call SID for {system_id}")
-            return {"exited": False, "reason": "invalid_state"}
+    if broker_has_position(call_sid, qty):
+        place_order_with_checks("SELL", call_sid, qty, True)
+        exited = True
 
-        exited_any_leg = False
+    if exited:
+        remove_system_state(system_id)
+        return {"exited": True}
 
-        # --------------------------------------------------
-        # 1️⃣ EXIT PUT FIRST (if exists)
-        # --------------------------------------------------
-        if put_sid:
-            if broker_has_position(put_sid, qty):
-                log.info(f"[EXIT][PUT] BUY PUT {put_sid} qty={qty}")
+    return {"exited": False}
 
-                buy_put = place_order_with_checks(
-                    side="BUY",
-                    security_id=put_sid,
-                    qty=qty,
-                    t0=t0,
-                    ensure_fill=True
-                )
-
-                if not buy_put.get("placed") or not buy_put.get("filled_completely"):
-                    log.error(f"[EXIT][FAILED] BUY PUT failed for {system_id}")
-                    return {"exited": False, "reason": "buy_put_failed"}
-
-                exited_any_leg = True
-                log.info(f"[EXIT][PUT] PUT exited successfully")
-            else:
-                log.warning(
-                    f"[EXIT][PUT][SKIP] No broker PUT position "
-                    f"SID={put_sid} qty={qty} system={system_id}"
-                )
-        else:
-            log.info(f"[EXIT][PUT] No PUT leg for {system_id} (partial position)")
-
-        # --------------------------------------------------
-        # 2️⃣ EXIT CALL
-        # --------------------------------------------------
-        if broker_has_position(call_sid, qty):
-            log.info(f"[EXIT][CALL] SELL CALL {call_sid} qty={qty}")
-
-            sell_call = place_order_with_checks(
-                side="SELL",
-                security_id=call_sid,
-                qty=qty,
-                t0=t0,
-                ensure_fill=True
-            )
-
-            if not sell_call.get("placed") or not sell_call.get("filled_completely"):
-                log.error(f"[EXIT][FAILED] SELL CALL failed for {system_id}")
-                return {"exited": False, "reason": "sell_call_failed"}
-
-            exited_any_leg = True
-            log.info(f"[EXIT][CALL] CALL exited successfully")
-        else:
-            log.warning(
-                f"[EXIT][CALL][SKIP] No broker CALL position "
-                f"SID={call_sid} qty={qty} system={system_id}"
-            )
-
-        # --------------------------------------------------
-        # 3️⃣ FINALIZE
-        # --------------------------------------------------
-        if exited_any_leg:
-            remove_system_state(system_id)
-            log.info(f"[EXIT][SUCCESS] system_id={system_id} closed safely")
-            return {"exited": True, "system_id": system_id, "qty": qty}
-
-        log.warning(f"[EXIT][NO_ACTION] Nothing exited for {system_id}")
-        return {"exited": False, "reason": "no_broker_position"}
-
-    except Exception as e:
-        log.exception(f"[EXIT][CRITICAL] Exception during EXIT: {e}")
-        return {
-            "exited": False,
-            "reason": "exception",
-            "error": str(e),
-        }
-
+# ==================================================
+# ROLLOVER
+# ==================================================
 def handle_rollover_if_needed():
-    """
-    Performs rollover for all systems whose expiry is today.
-    Called only on CHECK signal.
-    """
-
-    now_utc = datetime.utcnow()
-    today = now_utc.date()
-
-    # IST time check (after 12:30 PM IST)
-    now_ist = now_utc + timedelta(hours=5, minutes=30)
+    now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
     if now_ist.time() < dtime(12, 30):
-        log.info(f"[ROLLOVER] Skipped – IST time {now_ist.time()} < 12:30")
-        return {"skipped": True, "reason": "before_time"}
+        return {}
 
-    log.info(f"[ROLLOVER] Started at IST {now_ist.time()}")
-
-    rollover_summary = {}
+    today = date.today()
+    summary = {}
 
     for system_id, state in list(SYSTEM_POSITIONS.items()):
-        try:
-            expiry_str = state.get("expiry")
-            if not expiry_str:
-                continue
+        if date.fromisoformat(state["expiry"]) != today:
+            continue
 
-            expiry_date = date.fromisoformat(expiry_str)
+        if exit_synthetic_long(system_id, state).get("exited"):
+            res = enter_synthetic_long(system_id, state["underlying"], state["qty"])
+            if res.get("entered"):
+                persist_system_state(system_id, res)
+                summary[system_id] = "ROLLED"
 
-            if expiry_date != today:
-                continue
-
-            log.info(f"[ROLLOVER][{system_id}] Expiry today → rolling")
-
-            # 1️⃣ EXIT old position
-            exit_res = exit_synthetic_long(system_id, state)
-            if not exit_res.get("exited"):
-                log.error(f"[ROLLOVER][{system_id}] EXIT failed → skip rollover")
-                rollover_summary[system_id] = {
-                    "rolled": False,
-                    "reason": "exit_failed",
-                    "exit_result": exit_res,
-                }
-                continue
-
-            # 2️⃣ ENTER new position
-            qty = state.get("qty")
-            underlying = state.get("underlying", "NIFTY")
-
-            enter_res = enter_synthetic_long(system_id, underlying, qty)
-            if not enter_res.get("entered"):
-                log.error(f"[ROLLOVER][{system_id}] ENTER failed after EXIT")
-                rollover_summary[system_id] = {
-                    "rolled": False,
-                    "reason": "enter_failed_after_exit",
-                    "enter_result": enter_res,
-                }
-                continue
-
-            # 3️⃣ UPDATE STATE
-            new_state = {
-                "underlying": underlying,
-                "expiry": enter_res["expiry"],
-                "strike": enter_res["strike"],
-                "call_security_id": enter_res["call_security_id"],
-                "put_security_id": enter_res.get("put_security_id"),
-                "qty": qty,
-                "entry_time": datetime.utcnow().isoformat(),
-                "status": "OPEN",
-                "rolled_from": expiry_str,
-            }
-
-            persist_system_state(system_id, new_state)
-
-            log.info(f"[ROLLOVER][{system_id}] SUCCESS")
-
-            rollover_summary[system_id] = {
-                "rolled": True,
-                "from": expiry_str,
-                "to": enter_res["expiry"],
-            }
-
-        except Exception as e:
-            log.exception(f"[ROLLOVER][{system_id}] CRITICAL ERROR")
-            rollover_summary[system_id] = {
-                "rolled": False,
-                "reason": "exception",
-                "error": str(e),
-            }
-
-    return rollover_summary
-
+    return summary
 
 # ==================================================
 # WEBHOOK
 # ==================================================
 @app.route("/tv-webhook", methods=["POST"])
 def tv_webhook():
-    t0 = time.time()
-    data = request.get_json() or {}
-    log.info(f"[TV] Payload: {data}")
-
-    raw_signal = str(data.get("signal", "")).upper()
-    system_id = str(data.get("system_id", "")).strip()
-    underlying = str(data.get("underlying", "NIFTY")).upper()
-    qty = int(data.get("qty", 75))
-
-    if raw_signal in ("BUY", "SELL", "EXIT") and not system_id:
-        return jsonify({"error": "system_id required"}), 400
-
-
-    # ---------------- CHECK ----------------
-    if raw_signal == "CHECK":
-        rollover_result = handle_rollover_if_needed()
-
-        return jsonify({"status": "ok","action": "CHECK","rollover": rollover_result}), 200
-
-
-    # ---------------- BUY ----------------
-    elif raw_signal == "BUY":
-        log.info(f"[SIGNAL][BUY] {system_id}")
-
-        if system_id in SYSTEM_POSITIONS:
-            log.warning(f"[BUY][IGNORED] {system_id} already open")
-            return jsonify({"status": "ignored"}), 200
-
-        res = enter_synthetic_long(system_id, underlying, qty)
-        if not res.get("entered"):
-            return jsonify({"status": "failed"}), 200
-
-        state = {
-            "underlying": underlying,
-            "qty": qty,
-            "expiry": res["expiry"],
-            "strike": res["strike"],
-            "call_security_id": res["call_security_id"],
-            "put_security_id": res["put_security_id"],
-            "entry_time": datetime.utcnow().isoformat(),
-            "status": "OPEN",
-        }
-
-        persist_system_state(system_id, state)
-
-        return jsonify({"status": "ok", "state": state}), 200
-
-    # ---------------- SELL / EXIT ----------------
-    elif raw_signal in ("SELL", "EXIT"):
-        log.info(f"[SIGNAL][EXIT] {system_id}")
-
-        if system_id not in SYSTEM_POSITIONS:
-            log.warning(f"[EXIT][IGNORED] {system_id} not found")
-            return jsonify({"status": "ignored"}), 200
-
-        state = SYSTEM_POSITIONS[system_id]
-        exit_synthetic_long(system_id, state)
-        
-        return jsonify({"status": "ok"}), 200
-
-# ==================================================
-# ADMIN & HEALTH
-# ==================================================
-@app.route("/admin/reset-system", methods=["POST"])
-def reset_system():
-    data = request.get_json() or {}
+    data = request.json or {}
+    signal = str(data.get("signal", "")).upper()
     system_id = data.get("system_id")
-    if not system_id:
-        return jsonify({"error": "system_id required"}), 400
-    remove_system_state(system_id)
-    return jsonify({"status": "ok"}), 200
+    underlying = data.get("underlying", "NIFTY")
+    qty = int(data.get("qty", 1))  # 🔴 START WITH 1 ONLY
 
+    if signal == "CHECK":
+        return jsonify(handle_rollover_if_needed())
 
+    if signal == "BUY":
+        if system_id in SYSTEM_POSITIONS:
+            return jsonify({"ignored": True})
+        res = enter_synthetic_long(system_id, underlying, qty)
+        if res.get("entered"):
+            persist_system_state(system_id, res)
+        return jsonify(res)
+
+    if signal in ("SELL", "EXIT"):
+        if system_id not in SYSTEM_POSITIONS:
+            return jsonify({"ignored": True})
+        return jsonify(exit_synthetic_long(system_id, SYSTEM_POSITIONS[system_id]))
+
+    return jsonify({"ignored": True})
+
+# ==================================================
+# HEALTH
+# ==================================================
 @app.route("/health")
 def health():
     return jsonify({"ok": True, "systems": list(SYSTEM_POSITIONS.keys())})
 
-
-@app.route("/")
-def home():
-    return "Dhan Trading Bot running"
-
-
+# ==================================================
+# RUN
+# ==================================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
