@@ -66,6 +66,48 @@ def dhan_headers():
     }
 
 # ==================================================
+# DISCOVER NIFTY UNDERLYING SECURITY ID (ONE TIME)
+# ==================================================
+def get_nifty_underlying_security_id():
+    """
+    Fetch NIFTY index securityId using Dhan Market Quote API
+    """
+    try:
+        payload = {
+            "NSE_IDX": [
+                {
+                    "symbol": "NIFTY 50",
+                    "exchange": "NSE"
+                }
+            ]
+        }
+
+        url = "https://api.dhan.co/v2/marketfeed/quote"
+        r = requests.post(
+            url,
+            headers=dhan_headers(),
+            json=payload,
+            timeout=10
+        )
+        r.raise_for_status()
+
+        data = r.json()
+        nifty = data.get("data", {}).get("NSE_IDX", [])
+
+        if not nifty:
+            log.error("[NIFTY][ID] No data returned")
+            return None
+
+        security_id = nifty[0].get("securityId")
+        log.info(f"[NIFTY][ID] securityId={security_id}")
+        return security_id
+
+    except Exception as e:
+        log.error(f"[NIFTY][ID][ERROR] {e}")
+        return None
+
+
+# ==================================================
 # BROKER POSITIONS (REAL)
 # ==================================================
 def get_broker_positions():
@@ -299,6 +341,7 @@ def tv_webhook():
         return jsonify(handle_rollover_if_needed())
 
     if signal == "BUY":
+        get_nifty_underlying_security_id()
         if system_id in SYSTEM_POSITIONS:
             return jsonify({"ignored": True})
         res = enter_synthetic_long(system_id, underlying, qty)
