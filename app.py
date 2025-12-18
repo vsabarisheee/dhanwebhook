@@ -292,7 +292,7 @@ def select_atm_strike(expiry_data, spot):
 def enter_synthetic(system_id, expiry, spot, expiry_data, qty):
     strike, call_sid, put_sid = select_atm_strike(expiry_data, spot)
     if not strike:
-        log.error("[ENTER] No liquid ATM found")
+        log.warning("[ENTER] No liquid ATM found (market likely closed)")
         return None
 
     buy_call = place_order_with_checks("BUY", call_sid, qty, True)
