@@ -314,15 +314,25 @@ def exit_synthetic(system_id, state):
     qty = state["qty"]
     exited = False
 
+    # Exit PUT leg first (if exists)
     if state.get("put_security_id") and broker_has_position(state["put_security_id"], qty):
         place_order_with_checks("BUY", state["put_security_id"], qty, True)
         exited = True
 
+    # Exit CALL leg
     if broker_has_position(state["call_security_id"], qty):
         place_order_with_checks("SELL", state["call_security_id"], qty, True)
         exited = True
 
-    return exited
+    # 🔁 RECONCILIATION FIX
+    if not exited:
+        log.warning(
+            f"[EXIT][RECONCILE] No broker position for {system_id} — assuming already closed"
+        )
+        return True
+
+    return True
+
 
 def handle_rollover():
     underlying_id = int(os.getenv("NIFTY_UNDERLYING_ID"))
