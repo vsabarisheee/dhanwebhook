@@ -169,8 +169,11 @@ def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
         )
         r.raise_for_status()
 
-        data = r.json()
-        expiries = data.get("data", {}).get("expiryList", [])
+        expiries = r.json()
+
+        if not isinstance(expiries, list):
+            log.error(f"[EXPIRY] Unexpected response: {expiries}")
+            return []
 
         log.info(f"[EXPIRY][LIST] {expiries}")
         return expiries
@@ -178,6 +181,7 @@ def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
     except Exception as e:
         log.error(f"[EXPIRY][ERROR] {e}")
         return []
+
 
 
 # ==================================================
