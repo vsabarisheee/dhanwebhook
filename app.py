@@ -300,21 +300,23 @@ def exit_synthetic_long(system_id, state):
             )
 
         # --------------------------------------------------
-        # 3️⃣ FINALIZE (REMOVE STATE ONLY IF SAFE)
+        # 3️⃣ FINALIZE
         # --------------------------------------------------
         if exited_any_leg:
             remove_system_state(system_id)
             log.info(f"[EXIT][SUCCESS] system_id={system_id} closed safely")
-            return {"exited": True,"system_id": system_id,"qty": qty}
+            return {"exited": True, "system_id": system_id, "qty": qty}
 
         log.warning(f"[EXIT][NO_ACTION] Nothing exited for {system_id}")
+        return {"exited": False, "reason": "no_broker_position"}
+
+    except Exception as e:
+        log.exception(f"[EXIT][CRITICAL] Exception during EXIT: {e}")
         return {
             "exited": False,
-            "reason": "no_broker_position"
+            "reason": "exception",
+            "error": str(e),
         }
-
-
-
 
 def handle_rollover_if_needed():
     """
