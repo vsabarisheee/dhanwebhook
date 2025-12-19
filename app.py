@@ -83,7 +83,7 @@ SYSTEM_POSITIONS = load_system_positions()
 def dhan_headers():
     return {
         "access-token": os.getenv("DHAN_ACCESS_TOKEN"),
-        "client-id": os.getenv("DHAN_CLIENT_ID"),
+        "dhanClientId": os.getenv("DHAN_CLIENT_ID"),
         "Content-Type": "application/json"
     }
 
@@ -661,6 +661,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
