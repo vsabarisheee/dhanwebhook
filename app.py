@@ -97,7 +97,16 @@ def get_broker_positions():
             headers=dhan_headers(),
             timeout=10
         )
-        r.raise_for_status()
+        if not r.ok:
+            log.error(
+                f"[ORDER][RESPONSE][{r.status_code}] {r.text}"
+            )
+            return {
+                "placed": False,
+                "status_code": r.status_code,
+                "error": r.text
+            }
+
         return r.json()
     except Exception as e:
         log.error(f"[BROKER][POSITIONS] {e}")
@@ -119,7 +128,16 @@ def get_order_status(order_id):
             headers=dhan_headers(),
             timeout=5
         )
-        r.raise_for_status()
+        if not r.ok:
+            log.error(
+                f"[ORDER][RESPONSE][{r.status_code}] {r.text}"
+            )
+            return {
+                "placed": False,
+                "status_code": r.status_code,
+                "error": r.text
+            }
+
         return r.json().get("orderStatus")
     except Exception:
         return None
@@ -145,7 +163,16 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             "https://api.dhan.co/v2/orders",
             headers=dhan_headers(), json=payload
         )
-        r.raise_for_status()
+        if not r.ok:
+            log.error(
+                f"[ORDER][RESPONSE][{r.status_code}] {r.text}"
+            )
+            return {
+                "placed": False,
+                "status_code": r.status_code,
+                "error": r.text
+            }
+
         order_id = r.json().get("orderId")
 
         if not order_id:
@@ -634,6 +661,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
