@@ -8,6 +8,14 @@ import logging
 from datetime import datetime, date, timedelta, time as dtime
 
 # ==================================================
+# ENTRY EXECUTION CONFIG
+# ==================================================
+SPREAD_LIMIT = 20          # max bid-ask spread allowed
+RETRY_INTERVAL = 2        # seconds between retries
+MAX_WAIT_SECONDS = 30     # total wait before abort
+FALLBACK_OFFSETS = [0, 100, -100]  # strikes in 100s only
+
+# ==================================================
 # LOGGING
 # ==================================================
 logging.basicConfig(
@@ -259,71 +267,91 @@ def fetch_option_chain_for_expiry(expiry_str):
         return None, None
 
 
+def spread_ok(sd):
+    try:
+        ce, pe = sd["ce"], sd["pe"]
+        ce_spread = float(ce["bestAskPrice"]) - float(ce["bestBidPrice"])
+        pe_spread = float(pe["bestAskPrice"]) - float(pe["bestBidPrice"])
+        return (
+            ce_spread <= SPREAD_LIMIT and pe_spread <= SPREAD_LIMIT,
+            ce_spread,
+            pe_spread,
+        )
+    except Exception:
+        return False, None, None
 
-def select_atm_strike(expiry_data, spot):
-    """
-    Select ATM strike strictly in multiples of 100.
-    Fallback searches ±100, ±200, ±300... but NEVER 50 strikes.
-    """
 
-    # Available strikes (ints)
-    strikes = sorted(int(float(k)) for k in expiry_data.keys())
+def get_sd_for_strike(expiry_data, strike):
+    sd = expiry_data.get(str(strike))
+    if not sd:
+        return None
+    if not sd.get("ce") or not sd.get("pe"):
+        return None
+    return sd
 
-    # Base ATM rounded to 100
-    base_atm = round(spot / 100) * 100
 
-    # Generate fallback ladder: 0, +100, -100, +200, -200, ...
-    MAX_STEPS = 5  # search up to ±500 points
+def enter_synthetic(system_id, expiry, spot, qty):
+    start_time = time.time()
 
-    for step in range(0, MAX_STEPS + 1):
-        for candidate in (
-            base_atm + step * 100,
-            base_atm - step * 100 if step != 0 else None,
-        ):
-            if candidate is None:
-                continue
+    base_strike = round(spot / 100) * 100
+    log.info(f"[ENTER] Spot={spot:.2f} BaseStrike={base_strike}")
 
-            if candidate not in strikes:
-                continue
+    while time.time() - start_time <= MAX_WAIT_SECONDS:
 
-            sd = expiry_data.get(str(candidate))
+        spot, oc = fetch_option_chain_for_expiry(expiry)
+        if not spot or not oc:
+            log.warning("[ENTER] Option chain fetch failed, retrying")
+            time.sleep(RETRY_INTERVAL)
+            continue
+
+        for offset in FALLBACK_OFFSETS:
+            strike = base_strike + offset
+            sd = get_sd_for_strike(oc, strike)
             if not sd:
                 continue
 
-            ce, pe = sd.get("ce"), sd.get("pe")
-            if not ce or not pe:
-                continue
+            ok, ce_spread, pe_spread = spread_ok(sd)
 
             log.info(
-                f"[ATM] Spot={spot:.2f} SelectedStrike={candidate} (100s only)"
+                f"[SPREAD] Strike={strike} "
+                f"CE={ce_spread} PE={pe_spread} OK={ok}"
             )
-            return candidate, ce["securityId"], pe["securityId"]
+
+            if not ok:
+                continue
+
+            ce_sid = sd["ce"]["securityId"]
+            pe_sid = sd["pe"]["securityId"]
+
+            # BUY CALL FIRST (must fill)
+            buy_call = place_order_with_checks("BUY", ce_sid, qty, True)
+            if not buy_call.get("placed"):
+                log.error("[ENTER] BUY CALL failed")
+                return None
+
+            # SELL PUT (best effort)
+            sell_put = place_order_with_checks("SELL", pe_sid, qty, False)
+
+            log.info(
+                f"[ENTER][SUCCESS] Strike={strike} "
+                f"CE={ce_sid} PE={pe_sid}"
+            )
+
+            return {
+                "expiry": expiry,
+                "strike": strike,
+                "call_security_id": ce_sid,
+                "put_security_id": pe_sid if sell_put.get("placed") else None,
+                "qty": qty,
+                "status": "OPEN"
+            }
+
+        time.sleep(RETRY_INTERVAL)
 
     log.warning(
-        f"[ATM][FAILED] No valid 100-strike found near spot={spot:.2f}"
+        "[ENTER][ABORT] Spread not acceptable for 30 seconds. No trade."
     )
-    return None, None, None
-
-def enter_synthetic(system_id, expiry, spot, expiry_data, qty):
-    strike, call_sid, put_sid = select_atm_strike(expiry_data, spot)
-    if not strike:
-        log.warning("[ENTER] No liquid ATM found (market likely closed)")
-        return None
-
-    buy_call = place_order_with_checks("BUY", call_sid, qty, True)
-    if not buy_call.get("placed"):
-        return None
-
-    sell_put = place_order_with_checks("SELL", put_sid, qty, False)
-
-    return {
-        "expiry": expiry,
-        "strike": strike,
-        "call_security_id": call_sid,
-        "put_security_id": put_sid if sell_put.get("placed") else None,
-        "qty": qty,
-        "status": "OPEN"
-    }
+    return None
 
 def exit_synthetic(system_id, state):
     qty = state["qty"]
@@ -442,7 +470,7 @@ def tv_webhook():
             return jsonify({"error": "Option chain fetch failed"}), 500
 
         state = enter_synthetic(
-            system_id, expiry, spot, expiry_data, qty
+            system_id, expiry, spot, qty
         )
 
         if state:
@@ -493,4 +521,5 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
