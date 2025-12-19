@@ -90,9 +90,10 @@ def dhan_headers():
 
     return {
         "access-token": token,
-        "dhanClientId": cid,     # 🔥 REQUIRED by Orders API
+        "client-id": cid,          # ✅ THIS IS THE ONLY CLIENT HEADER
         "Content-Type": "application/json"
-    }   
+    }
+   
 
 # ==================================================
 # BROKER POSITIONS (REAL)
@@ -668,6 +669,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
