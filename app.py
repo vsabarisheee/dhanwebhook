@@ -336,15 +336,6 @@ def spread_ok(sd):
     return ok, ce_spread, pe_spread
 
 
-def get_sd_for_strike(expiry_data, strike):
-    sd = expiry_data.get(str(strike))
-    if not sd:
-        return None
-    if not sd.get("ce") or not sd.get("pe"):
-        return None
-    return sd
-
-
 def enter_synthetic(system_id, expiry, spot, qty):
        
     start_time = time.time()
@@ -360,6 +351,10 @@ def enter_synthetic(system_id, expiry, spot, qty):
 
             # 🔹 Fetch option chain ONLY here
             spot, oc = fetch_option_chain_for_expiry(expiry)
+            if not spot or not oc:
+                log.warning("[ENTER] Option chain fetch failed, backing off")
+                time.sleep(RETRY_INTERVAL)
+                continue
             # --------------------------------------------------
             # NORMALIZE STRIKE KEYS (Dhan uses '25900.000000')
             # --------------------------------------------------
@@ -382,7 +377,7 @@ def enter_synthetic(system_id, expiry, spot, qty):
             nearby = sorted([s for s in oc.keys() if abs(s - spot_100) <= 500])
             log.info(f"[DEBUG][STRIKES][NEAR ATM] {nearby}")
 
-            sd = oc.get(str(strike))
+            sd = oc.get(strike)
             if not sd:
                 log.warning(f"[ENTER][DEBUG] Strike {strike} not present in option chain")
                 break
@@ -635,6 +630,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
