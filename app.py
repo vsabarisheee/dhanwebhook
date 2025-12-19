@@ -181,20 +181,21 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             "afterMarketOrder": False
         }
         headers = dhan_order_headers()
-
-        log.error(
-            "[ORDER][DEBUG][HEADERS] " + json.dumps(headers, indent=2)
-        )
-        log.error(
-            "[ORDER][DEBUG][PAYLOAD] " + json.dumps(payload, indent=2)
-        )
+        # 🔍 DEBUG SAFETY CHECKS (TEMPORARY)
+        assert "dhanClientId" in headers, "dhanClientId missing in order headers"
+        assert "client-id" in headers, "client-id missing in order headers"
+        
+        # 🔍 PRE-FLIGHT LOG (truth source)
+        log.error("[ORDER][DEBUG][HEADERS] " + json.dumps(headers, indent=2))
+        log.error("[ORDER][DEBUG][PAYLOAD] " + json.dumps(payload, indent=2))
 
         r = requests.post(
             "https://api.dhan.co/v2/orders",
-            headers=headers,
+            headers=headers,          # ✅ SAME VARIABLE
             json=payload,
             timeout=10
         )
+
         if not r.ok:
             log.error(
                 f"[ORDER][RESPONSE][{r.status_code}] {r.text}"
@@ -693,6 +694,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
