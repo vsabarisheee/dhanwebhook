@@ -341,6 +341,20 @@ def enter_synthetic(system_id, expiry, spot, qty):
 
             # 🔹 Fetch option chain ONLY here
             spot, oc = fetch_option_chain_for_expiry(expiry)
+            # --------------------------------------------------
+            # NORMALIZE STRIKE KEYS (Dhan uses '25900.000000')
+            # --------------------------------------------------
+            normalized_oc = {}
+
+            for k, v in oc.items():
+                try:
+                    strike_int = int(round(float(k)))
+                    normalized_oc[strike_int] = v
+                except Exception:
+                    continue
+
+            oc = normalized_oc
+
             if not spot or not oc:
                 log.warning("[ENTER] Option chain fetch failed, backing off")
                 time.sleep(RETRY_INTERVAL)
@@ -602,6 +616,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
