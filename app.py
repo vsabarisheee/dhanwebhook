@@ -481,9 +481,10 @@ def tv_webhook():
         if not expiry:
             return jsonify({"error": "No valid entry expiry"}), 400
 
-        spot, expiry_data = fetch_option_chain_for_expiry(expiry)
-        if not spot or not expiry_data:
-            return jsonify({"error": "Option chain fetch failed"}), 500
+        spot, _ = fetch_option_chain_for_expiry(expiry)
+        if not spot:
+            return jsonify({"error": "Spot fetch failed"}), 500
+
 
         Thread(
             target=delayed_enter_synthetic,
@@ -536,6 +537,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
