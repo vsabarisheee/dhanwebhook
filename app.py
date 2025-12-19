@@ -159,7 +159,7 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             "dhanClientId" : 1101700964,
             "transactionType": side,
             "exchangeSegment": "NSE_FNO",
-            "productType": "INTRADAY",
+            "productType": "MARGIN",
             "orderType": "MARKET",
             "validity": "DAY",
             "securityId": int(security_id),
@@ -670,6 +670,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
