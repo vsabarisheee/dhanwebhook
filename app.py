@@ -261,7 +261,7 @@ def fetch_option_chain_for_expiry(expiry_str):
 
     payload = {
         "UnderlyingScrip": int(uid),
-        "UnderlyingSeg": "NSE_IDX",
+        "UnderlyingSeg": "IDX_I",
         "Expiry": expiry_str
     }
 
@@ -303,18 +303,37 @@ def fetch_option_chain_for_expiry(expiry_str):
         log.error(f"[CHAIN][ERROR] {e}")
         return None, None
 
-def spread_ok(sd):
+def get_bid_ask(opt):
+    """
+    Extract bid/ask from Dhan option-chain response
+    """
     try:
-        ce, pe = sd["ce"], sd["pe"]
-        ce_spread = float(ce["bestAskPrice"]) - float(ce["bestBidPrice"])
-        pe_spread = float(pe["bestAskPrice"]) - float(pe["bestBidPrice"])
-        return (
-            ce_spread <= SPREAD_LIMIT and pe_spread <= SPREAD_LIMIT,
-            ce_spread,
-            pe_spread,
-        )
+        bid = float(opt.get("top_bid_price", 0))
+        ask = float(opt.get("top_ask_price", 0))
+        if bid > 0 and ask > 0:
+            return bid, ask
     except Exception:
+        pass
+    return None, None
+
+def spread_ok(sd):
+    ce = sd.get("ce")
+    pe = sd.get("pe")
+
+    if not ce or not pe:
         return False, None, None
+
+    ce_bid, ce_ask = get_bid_ask(ce)
+    pe_bid, pe_ask = get_bid_ask(pe)
+
+    if not ce_bid or not pe_bid:
+        return False, None, None
+
+    ce_spread = ce_ask - ce_bid
+    pe_spread = pe_ask - pe_bid
+
+    ok = ce_spread <= SPREAD_LIMIT and pe_spread <= SPREAD_LIMIT
+    return ok, ce_spread, pe_spread
 
 
 def get_sd_for_strike(expiry_data, strike):
@@ -359,10 +378,10 @@ def enter_synthetic(system_id, expiry, spot, qty):
                 log.warning("[ENTER] Option chain fetch failed, backing off")
                 time.sleep(RETRY_INTERVAL)
                 continue
-            log.info(
-                f"[DEBUG][STRIKES] Sample strikes = "
-                f"{list(sorted(oc.keys()))[:20]}"
-            )
+            spot_100 = int(round(spot / 100) * 100)
+            nearby = sorted([s for s in oc.keys() if abs(s - spot_100) <= 500])
+            log.info(f"[DEBUG][STRIKES][NEAR ATM] {nearby}")
+
             sd = oc.get(str(strike))
             if not sd:
                 log.warning(f"[ENTER][DEBUG] Strike {strike} not present in option chain")
@@ -616,6 +635,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
