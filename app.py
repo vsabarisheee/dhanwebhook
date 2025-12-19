@@ -242,7 +242,7 @@ def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
         url = "https://api.dhan.co/v2/optionchain/expirylist"
         r = requests.post(
             url,
-            headers=dhan_market_headers,
+            headers=dhan_market_headers(),
             json=payload,
             timeout=10
         )
@@ -693,6 +693,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
