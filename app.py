@@ -150,7 +150,7 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
         payload = {
             "transactionType": side,
             "exchangeSegment": "NSE_FNO",
-            "productType": "NRML",
+            "productType": "INTRADAY",
             "orderType": "MARKET",
             "validity": "DAY",
             "securityId": int(security_id),
@@ -661,6 +661,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
