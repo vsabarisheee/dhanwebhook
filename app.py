@@ -261,33 +261,48 @@ def fetch_option_chain_for_expiry(expiry_str):
 
 
 def select_atm_strike(expiry_data, spot):
-    strikes = [float(k) for k in expiry_data.keys() if k != "last_price"]
-    rounded_atm = round(spot / 100) * 100
+    """
+    Select ATM strike strictly in multiples of 100.
+    Fallback searches ±100, ±200, ±300... but NEVER 50 strikes.
+    """
 
-    candidate_strikes = sorted(
-        strikes,
-        key=lambda x: abs(x - rounded_atm)
+    # Available strikes (ints)
+    strikes = sorted(int(float(k)) for k in expiry_data.keys())
+
+    # Base ATM rounded to 100
+    base_atm = round(spot / 100) * 100
+
+    # Generate fallback ladder: 0, +100, -100, +200, -200, ...
+    MAX_STEPS = 5  # search up to ±500 points
+
+    for step in range(0, MAX_STEPS + 1):
+        for candidate in (
+            base_atm + step * 100,
+            base_atm - step * 100 if step != 0 else None,
+        ):
+            if candidate is None:
+                continue
+
+            if candidate not in strikes:
+                continue
+
+            sd = expiry_data.get(str(candidate))
+            if not sd:
+                continue
+
+            ce, pe = sd.get("ce"), sd.get("pe")
+            if not ce or not pe:
+                continue
+
+            log.info(
+                f"[ATM] Spot={spot:.2f} SelectedStrike={candidate} (100s only)"
+            )
+            return candidate, ce["securityId"], pe["securityId"]
+
+    log.warning(
+        f"[ATM][FAILED] No valid 100-strike found near spot={spot:.2f}"
     )
-
-    MAX_SPREAD = 10
-
-    for strike in candidate_strikes:
-        sd = expiry_data.get(str(strike))
-        if not sd:
-            continue
-
-        ce, pe = sd.get("ce"), sd.get("pe")
-        if not ce or not pe:
-            continue
-
-        ce_bid, ce_ask = float(ce["bestBidPrice"]), float(ce["bestAskPrice"])
-        pe_bid, pe_ask = float(pe["bestBidPrice"]), float(pe["bestAskPrice"])
-
-        if (ce_ask - ce_bid) <= MAX_SPREAD and (pe_ask - pe_bid) <= MAX_SPREAD:
-            return strike, ce["securityId"], pe["securityId"]
-
     return None, None, None
-
 
 def enter_synthetic(system_id, expiry, spot, expiry_data, qty):
     strike, call_sid, put_sid = select_atm_strike(expiry_data, spot)
@@ -478,3 +493,4 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
