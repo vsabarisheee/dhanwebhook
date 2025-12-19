@@ -9,6 +9,19 @@ from datetime import datetime, date, timedelta, time as dtime
 from threading import Thread
 
 # ==================================================
+# OPTION CHAIN CACHE (RATE LIMIT PROTECTION)
+# ==================================================
+OPTION_CHAIN_CACHE = {
+    "expiry": None,
+    "spot": None,
+    "data": None,
+    "ts": 0
+}
+
+OPTION_CHAIN_TTL = 3  # seconds
+
+
+# ==================================================
 # ENTRY EXECUTION CONFIG
 # ==================================================
 SPREAD_LIMIT = 20          # max bid-ask spread allowed
@@ -229,6 +242,18 @@ def choose_entry_expiry(monthly_expiries):
 
 
 def fetch_option_chain_for_expiry(expiry_str):
+    now = time.time()
+
+    # --------------------------------------------------
+    # ✅ RETURN CACHED DATA IF FRESH
+    # --------------------------------------------------
+    if (
+        OPTION_CHAIN_CACHE["expiry"] == expiry_str
+        and now - OPTION_CHAIN_CACHE["ts"] < OPTION_CHAIN_TTL
+    ):
+        log.info("[CHAIN][CACHE] Using cached option chain")
+        return OPTION_CHAIN_CACHE["spot"], OPTION_CHAIN_CACHE["data"]
+
     uid = os.getenv("NIFTY_UNDERLYING_ID")
     if not uid:
         log.error("[CONFIG] NIFTY_UNDERLYING_ID not set")
@@ -261,12 +286,22 @@ def fetch_option_chain_for_expiry(expiry_str):
             log.error("[CHAIN] Invalid spot price")
             return None, None
 
+        # --------------------------------------------------
+        # ✅ UPDATE CACHE
+        # --------------------------------------------------
+        OPTION_CHAIN_CACHE.update({
+            "expiry": expiry_str,
+            "spot": spot,
+            "data": oc,
+            "ts": time.time()
+        })
+
+        log.info("[CHAIN][FETCH] Option chain refreshed from API")
         return spot, oc
 
     except Exception as e:
         log.error(f"[CHAIN][ERROR] {e}")
         return None, None
-
 
 def spread_ok(sd):
     try:
@@ -293,23 +328,27 @@ def get_sd_for_strike(expiry_data, strike):
 
 def enter_synthetic(system_id, expiry, spot, qty):
     start_time = time.time()
-
     base_strike = round(spot / 100) * 100
+
     log.info(f"[ENTER] Spot={spot:.2f} BaseStrike={base_strike}")
 
-    while time.time() - start_time <= MAX_WAIT_SECONDS:
+    for offset in FALLBACK_OFFSETS:
+        strike = base_strike + offset
+        log.info(f"[ENTER] Trying strike {strike}")
 
-        spot, oc = fetch_option_chain_for_expiry(expiry)
-        if not spot or not oc:
-            log.warning("[ENTER] Option chain fetch failed, retrying")
-            time.sleep(RETRY_INTERVAL)
-            continue
+        while time.time() - start_time <= MAX_WAIT_SECONDS:
 
-        for offset in FALLBACK_OFFSETS:
-            strike = base_strike + offset
+            # 🔹 Fetch option chain ONLY here
+            spot, oc = fetch_option_chain_for_expiry(expiry)
+            if not spot or not oc:
+                log.warning("[ENTER] Option chain fetch failed, backing off")
+                time.sleep(RETRY_INTERVAL)
+                continue
+
             sd = get_sd_for_strike(oc, strike)
             if not sd:
-                continue
+                log.warning(f"[ENTER] No CE/PE for strike {strike}")
+                break  # move to next fallback strike
 
             ok, ce_spread, pe_spread = spread_ok(sd)
 
@@ -318,40 +357,45 @@ def enter_synthetic(system_id, expiry, spot, qty):
                 f"CE={ce_spread} PE={pe_spread} OK={ok}"
             )
 
-            if not ok:
-                continue
+            # ✅ GOOD SPREAD → EXECUTE IMMEDIATELY
+            if ok:
+                ce_sid = sd["ce"]["securityId"]
+                pe_sid = sd["pe"]["securityId"]
 
-            ce_sid = sd["ce"]["securityId"]
-            pe_sid = sd["pe"]["securityId"]
+                buy_call = place_order_with_checks("BUY", ce_sid, qty, True)
+                if not buy_call.get("placed"):
+                    log.error("[ENTER] BUY CALL failed")
+                    return None
 
-            # BUY CALL FIRST (must fill)
-            buy_call = place_order_with_checks("BUY", ce_sid, qty, True)
-            if not buy_call.get("placed"):
-                log.error("[ENTER] BUY CALL failed")
-                return None
+                sell_put = place_order_with_checks("SELL", pe_sid, qty, False)
 
-            # SELL PUT (best effort)
-            sell_put = place_order_with_checks("SELL", pe_sid, qty, False)
+                log.info(
+                    f"[ENTER][SUCCESS] Strike={strike} "
+                    f"CE={ce_sid} PE={pe_sid}"
+                )
 
+                return {
+                    "expiry": expiry,
+                    "strike": strike,
+                    "call_security_id": ce_sid,
+                    "put_security_id": pe_sid if sell_put.get("placed") else None,
+                    "qty": qty,
+                    "status": "OPEN"
+                }
+
+            # ❌ BAD SPREAD → WAIT, THEN RETRY
             log.info(
-                f"[ENTER][SUCCESS] Strike={strike} "
-                f"CE={ce_sid} PE={pe_sid}"
+                f"[WAIT] Spread too wide for strike {strike}, "
+                f"retrying in {RETRY_INTERVAL}s"
             )
+            time.sleep(RETRY_INTERVAL)
 
-            return {
-                "expiry": expiry,
-                "strike": strike,
-                "call_security_id": ce_sid,
-                "put_security_id": pe_sid if sell_put.get("placed") else None,
-                "qty": qty,
-                "status": "OPEN"
-            }
+        log.warning(
+            f"[ENTER] Spread not acceptable for strike {strike}, "
+            "trying fallback"
+        )
 
-        time.sleep(RETRY_INTERVAL)
-
-    log.warning(
-        "[ENTER][ABORT] Spread not acceptable for 30 seconds. No trade."
-    )
+    log.warning("[ENTER][ABORT] No strike met spread criteria. No trade.")
     return None
     
 def delayed_enter_synthetic(system_id, expiry, spot, qty):
@@ -537,6 +581,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
