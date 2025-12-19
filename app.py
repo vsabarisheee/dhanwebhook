@@ -172,7 +172,7 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
 # ==================================================
 # OPTION EXPIRY LIST (OFFICIAL DHAN API)
 # ==================================================
-def get_option_expiries(underlying_id, underlying_seg="NSE_IDX"):
+def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
     """
     Fetch list of valid expiries for the underlying from Dhan
     """
@@ -616,6 +616,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
