@@ -408,8 +408,8 @@ def enter_synthetic(system_id, expiry, spot, qty):
 
             # ✅ GOOD SPREAD → EXECUTE IMMEDIATELY
             if ok:
-                ce_sid = sd["ce"]["securityId"]
-                pe_sid = sd["pe"]["securityId"]
+                ce_sid = sd["ce"]["security_id"]
+                pe_sid = sd["pe"]["security_id"]
 
                 buy_call = place_order_with_checks("BUY", ce_sid, qty, True)
                 if not buy_call.get("placed"):
@@ -630,6 +630,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
