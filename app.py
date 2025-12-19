@@ -78,21 +78,35 @@ def remove_system_state(system_id):
 SYSTEM_POSITIONS = load_system_positions()
 
 # ==================================================
-# DHAN AUTH HELPERS
+# DHAN HEADERS
 # ==================================================
-def dhan_headers():
-    cid = os.getenv("DHAN_CLIENT_ID")
-    token = os.getenv("DHAN_ACCESS_TOKEN")
 
-    log.error(
-        f"[AUTH][DEBUG] CLIENT_ID={cid} TOKEN={token[:10]}..."
-    )
-
+def dhan_market_headers():
+    """
+    Use ONLY for market-data APIs:
+    - option chain
+    - expiry list
+    """
     return {
-        "access-token": token,
-        "client-id": cid,          # ✅ THIS IS THE ONLY CLIENT HEADER
+        "access-token": os.getenv("DHAN_ACCESS_TOKEN"),
         "Content-Type": "application/json"
     }
+
+
+def dhan_order_headers():
+    """
+    Use ONLY for order APIs:
+    - place order
+    - modify order
+    - cancel order
+    """
+    return {
+        "access-token": os.getenv("DHAN_ACCESS_TOKEN"),
+        "client-id": os.getenv("DHAN_CLIENT_ID"),
+        "dhanClientId": os.getenv("DHAN_CLIENT_ID"),
+        "Content-Type": "application/json"
+    }
+
    
 
 # ==================================================
@@ -156,7 +170,6 @@ def get_order_status(order_id):
 def place_order_with_checks(side, security_id, qty, ensure_fill=True):
     try:
         payload = {
-            "dhanClientId" : 1101700964,
             "transactionType": side,
             "exchangeSegment": "NSE_FNO",
             "productType": "INTRADAY",
@@ -167,10 +180,20 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             "disclosedQuantity": 0,
             "afterMarketOrder": False
         }
-        log.error("[ORDER][DEBUG][PAYLOAD] " + json.dumps(payload))
+        headers = dhan_order_headers()
+
+        log.error(
+            "[ORDER][DEBUG][HEADERS] " + json.dumps(headers, indent=2)
+        )
+        log.error(
+            "[ORDER][DEBUG][PAYLOAD] " + json.dumps(payload, indent=2)
+        )
+
         r = requests.post(
             "https://api.dhan.co/v2/orders",
-            headers=dhan_headers(), json=payload
+            headers=headers,
+            json=payload,
+            timeout=10
         )
         if not r.ok:
             log.error(
@@ -219,7 +242,7 @@ def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
         url = "https://api.dhan.co/v2/optionchain/expirylist"
         r = requests.post(
             url,
-            headers=dhan_headers(),
+            headers=dhan_market_headers,
             json=payload,
             timeout=10
         )
@@ -305,7 +328,7 @@ def fetch_option_chain_for_expiry(expiry_str):
     try:
         r = requests.post(
             "https://api.dhan.co/v2/optionchain",
-            headers=dhan_headers(),
+            headers=dhan_market_headers(),
             json=payload,
             timeout=10
         )
@@ -670,6 +693,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
