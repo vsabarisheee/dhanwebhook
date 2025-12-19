@@ -327,6 +327,11 @@ def get_sd_for_strike(expiry_data, strike):
 
 
 def enter_synthetic(system_id, expiry, spot, qty):
+    log.info(
+    f"[DEBUG][STRIKES] Available strikes (sample) = "
+    f"{sorted(map(int, oc.keys()))[:20]}"
+    )
+    
     start_time = time.time()
     base_strike = round(spot / 100) * 100
 
@@ -345,10 +350,27 @@ def enter_synthetic(system_id, expiry, spot, qty):
                 time.sleep(RETRY_INTERVAL)
                 continue
 
-            sd = get_sd_for_strike(oc, strike)
+            sd = oc.get(str(strike))
             if not sd:
-                log.warning(f"[ENTER] No CE/PE for strike {strike}")
-                break  # move to next fallback strike
+                log.warning(f"[ENTER][DEBUG] Strike {strike} not present in option chain")
+                break
+
+            # 🔍 DEBUG: Print raw CE/PE once
+            ce = sd.get("ce")
+            pe = sd.get("pe")
+
+            log.info(
+                f"[DEBUG][RAW][{system_id}] "
+                f"Strike={strike} "
+                f"CE={json.dumps(ce, indent=2)} "
+                f"PE={json.dumps(pe, indent=2)}"
+            )
+
+            # Continue normal checks
+            if not ce or not pe:
+                log.warning(f"[ENTER] Strike {strike} missing CE or PE")
+                break
+
 
             ok, ce_spread, pe_spread = spread_ok(sd)
 
@@ -581,6 +603,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
