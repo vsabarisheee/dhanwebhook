@@ -6,13 +6,14 @@ import json
 import tempfile
 import logging
 from datetime import datetime, date, timedelta, time as dtime
+from threading import Thread
 
 # ==================================================
 # ENTRY EXECUTION CONFIG
 # ==================================================
 SPREAD_LIMIT = 20          # max bid-ask spread allowed
-RETRY_INTERVAL = 2        # seconds between retries
-MAX_WAIT_SECONDS = 30     # total wait before abort
+RETRY_INTERVAL = 3        # seconds between retries
+MAX_WAIT_SECONDS = 20     # total wait before abort
 FALLBACK_OFFSETS = [0, 100, -100]  # strikes in 100s only
 
 # ==================================================
@@ -352,6 +353,21 @@ def enter_synthetic(system_id, expiry, spot, qty):
         "[ENTER][ABORT] Spread not acceptable for 30 seconds. No trade."
     )
     return None
+    
+def delayed_enter_synthetic(system_id, expiry, spot, qty):
+    try:
+        log.info(f"[ENTER][ASYNC][START] {system_id}")
+        state = enter_synthetic(system_id, expiry, spot, qty)
+
+        if state:
+            persist_system_state(system_id, state)
+            log.info(f"[ENTER][DONE] {system_id}")
+        else:
+            log.warning(f"[ENTER][SKIPPED] {system_id}")
+
+    except Exception as e:
+        log.error(f"[ENTER][ERROR][{system_id}] {e}")
+
 
 def exit_synthetic(system_id, state):
     qty = state["qty"]
@@ -469,15 +485,14 @@ def tv_webhook():
         if not spot or not expiry_data:
             return jsonify({"error": "Option chain fetch failed"}), 500
 
-        state = enter_synthetic(
-            system_id, expiry, spot, qty
-        )
+        Thread(
+            target=delayed_enter_synthetic,
+            args=(system_id, expiry, spot, qty),
+            daemon=True
+        ).start()
 
-        if state:
-            persist_system_state(system_id, state)
-            return jsonify({"status": "entered"}), 200
+return jsonify({"status": "entry_processing"}), 200
 
-        return jsonify({"error": "entry_failed"}), 400
 
     # -------------------------------
     # SELL / EXIT SIGNAL
@@ -521,5 +536,6 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
