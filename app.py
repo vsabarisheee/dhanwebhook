@@ -327,11 +327,7 @@ def get_sd_for_strike(expiry_data, strike):
 
 
 def enter_synthetic(system_id, expiry, spot, qty):
-    log.info(
-    f"[DEBUG][STRIKES] Available strikes (sample) = "
-    f"{sorted(map(int, oc.keys()))[:20]}"
-    )
-    
+       
     start_time = time.time()
     base_strike = round(spot / 100) * 100
 
@@ -349,7 +345,10 @@ def enter_synthetic(system_id, expiry, spot, qty):
                 log.warning("[ENTER] Option chain fetch failed, backing off")
                 time.sleep(RETRY_INTERVAL)
                 continue
-
+            log.info(
+                f"[DEBUG][STRIKES] Sample strikes = "
+                f"{list(sorted(oc.keys()))[:20]}"
+            )
             sd = oc.get(str(strike))
             if not sd:
                 log.warning(f"[ENTER][DEBUG] Strike {strike} not present in option chain")
@@ -603,6 +602,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
