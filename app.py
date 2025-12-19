@@ -491,7 +491,7 @@ def tv_webhook():
             daemon=True
         ).start()
 
-return jsonify({"status": "entry_processing"}), 200
+        return jsonify({"status": "entry_processing"}), 200
 
 
     # -------------------------------
@@ -536,6 +536,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
