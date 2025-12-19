@@ -187,7 +187,10 @@ def get_option_expiries(underlying_id, underlying_seg="IDX_I"):
             json=payload,
             timeout=10
         )
-        r.raise_for_status()
+        if not r.ok:
+            log.error(f"[ORDER][RESPONSE][{r.status_code}] {r.text}")
+            return {"placed": False, "error": r.text}
+
 
         resp = r.json()
 
@@ -270,7 +273,10 @@ def fetch_option_chain_for_expiry(expiry_str):
             json=payload,
             timeout=10
         )
-        r.raise_for_status()
+        if not r.ok:
+            log.error(f"[ORDER][RESPONSE][{r.status_code}] {r.text}")
+            return {"placed": False, "error": r.text}
+
 
         data = r.json().get("data", {})
         oc = data.get("oc")
@@ -628,6 +634,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
