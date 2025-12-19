@@ -135,11 +135,9 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             "productType": "NRML",
             "orderType": "MARKET",
             "validity": "DAY",
-            "securityId": str(security_id),
-            "quantity": qty,
+            "securityId": int(security_id),
+            "quantity": int(qty),
             "disclosedQuantity": 0,
-            "price": 0,
-            "triggerPrice": "",
             "afterMarketOrder": False
         }
 
@@ -630,6 +628,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
