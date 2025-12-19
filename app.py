@@ -81,14 +81,15 @@ SYSTEM_POSITIONS = load_system_positions()
 # DHAN AUTH HELPERS
 # ==================================================
 def dhan_headers():
+    log.error(
+    f"[AUTH][DEBUG] CLIENT_ID={os.getenv('DHAN_CLIENT_ID')} TOKEN={os.getenv('DHAN_ACCESS_TOKEN')[:10]}..."
+    )
     return {
         "access-token": os.getenv("DHAN_ACCESS_TOKEN"),
         "dhanClientId": os.getenv("DHAN_CLIENT_ID"),
         "Content-Type": "application/json"
     }
-    log.error(
-    f"[AUTH][DEBUG] CLIENT_ID={os.getenv('DHAN_CLIENT_ID')} TOKEN={os.getenv('DHAN_ACCESS_TOKEN')[:10]}..."
-    )
+    
 
 # ==================================================
 # BROKER POSITIONS (REAL)
@@ -664,6 +665,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
