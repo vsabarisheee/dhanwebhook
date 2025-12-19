@@ -156,7 +156,7 @@ def get_order_status(order_id):
 def place_order_with_checks(side, security_id, qty, ensure_fill=True):
     try:
         payload = {
-            "dhanClientId" : "1101700964",
+            "dhanClientId" : 1101700964,
             "transactionType": side,
             "exchangeSegment": "NSE_FNO",
             "productType": "INTRADAY",
@@ -670,6 +670,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
