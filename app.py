@@ -158,7 +158,7 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             "disclosedQuantity": 0,
             "afterMarketOrder": False
         }
-
+        log.error("[ORDER][DEBUG][PAYLOAD] " + json.dumps(payload))
         r = requests.post(
             "https://api.dhan.co/v2/orders",
             headers=dhan_headers(), json=payload
@@ -661,6 +661,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
