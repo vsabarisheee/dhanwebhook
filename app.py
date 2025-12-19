@@ -82,13 +82,16 @@ SYSTEM_POSITIONS = load_system_positions()
 # ==================================================
 def dhan_headers():
     log.error(
-    f"[AUTH][DEBUG] CLIENT_ID={os.getenv('DHAN_CLIENT_ID')} TOKEN={os.getenv('DHAN_ACCESS_TOKEN')[:10]}..."
+        f"[AUTH][DEBUG] CLIENT_ID={os.getenv('DHAN_CLIENT_ID')} "
+        f"TOKEN={os.getenv('DHAN_ACCESS_TOKEN')[:10]}..."
     )
+
     return {
         "access-token": os.getenv("DHAN_ACCESS_TOKEN"),
-        "dhanClientId": os.getenv("DHAN_CLIENT_ID"),
+        "clientId": os.getenv("DHAN_CLIENT_ID"),   # 🔥 THIS IS THE KEY
         "Content-Type": "application/json"
     }
+
     
 
 # ==================================================
@@ -665,6 +668,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
