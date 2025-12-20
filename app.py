@@ -553,8 +553,9 @@ def handle_rollover():
             continue
 
         new_state = enter_synthetic(
-            system_id, next_expiry, spot, oc, state["qty"]
+            system_id, next_expiry, spot, state["qty"]
         )
+
 
         if new_state:
             persist_system_state(system_id, new_state)
@@ -670,6 +671,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
