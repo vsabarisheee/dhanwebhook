@@ -43,7 +43,8 @@ log = logging.getLogger("DHAN_ENGINE")
 # ==================================================
 app = Flask(__name__)
 
-STATE_FILE = "/tmp/system_positions.json"
+os.makedirs("/data", exist_ok=True)
+STATE_FILE = "/data/system_positions.json"
 SYSTEM_POSITIONS = {}
 
 # ==================================================
@@ -671,6 +672,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
