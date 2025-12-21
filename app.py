@@ -657,6 +657,15 @@ def tv_webhook():
     # -------------------------------
     return jsonify({"status": "ignored"}), 200
 
+# ==================================================
+# system_positions.json
+# ==================================================
+@app.route("/debug/state", methods=["GET"])
+def debug_state():
+    return jsonify({
+        "systems": SYSTEM_POSITIONS,
+        "count": len(SYSTEM_POSITIONS)
+    })
 
 
 # ==================================================
@@ -672,6 +681,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
