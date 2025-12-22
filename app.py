@@ -49,6 +49,17 @@ app = Flask(__name__)
 os.makedirs("/data", exist_ok=True)
 STATE_FILE = "/data/system_positions.json"
 SYSTEM_POSITIONS = {}
+# 🔍 BOOT-TIME DISK CHECK (TEMPORARY DEBUG)
+log.info(f"[BOOT] STATE_FILE exists = {os.path.exists(STATE_FILE)}")
+log.info(f"[BOOT] STATE_FILE path = {STATE_FILE}")
+
+try:
+    files = os.listdir("/data")
+except Exception as e:
+    files = f"ERROR: {e}"
+
+log.info(f"[BOOT] Files in /data = {files}")
+
 
 # ==================================================
 # STATE HELPERS
@@ -63,10 +74,14 @@ def load_system_positions():
         return {}
 
 def save_system_positions(state):
-    fd, tmp = tempfile.mkstemp()
-    with os.fdopen(fd, "w") as f:
+    tmp_path = STATE_FILE + ".tmp"
+
+    with open(tmp_path, "w") as f:
         json.dump(state, f, indent=2)
-    os.replace(tmp, STATE_FILE)
+
+    # Atomic replace on SAME filesystem
+    os.replace(tmp_path, STATE_FILE)
+
 
 def persist_system_state(system_id, state):
     SYSTEM_POSITIONS[system_id] = state
@@ -746,6 +761,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
