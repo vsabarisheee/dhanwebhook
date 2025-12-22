@@ -147,19 +147,24 @@ def get_order_status(order_id):
             headers=dhan_headers(),
             timeout=5
         )
+
         if not r.ok:
             log.error(
                 f"[ORDER][RESPONSE][{r.status_code}] {r.text}"
             )
-            return {
-                "placed": False,
-                "status_code": r.status_code,
-                "error": r.text
-            }
+            return None
 
-        return r.json().get("orderStatus")
-    except Exception:
+        status = r.json().get("orderStatus")
+
+        # 🔍 THIS IS THE ONLY LINE YOU ARE ADDING
+        log.info(f"[ORDER][STATUS][POLL] orderId={order_id} status={status}")
+
+        return status
+
+    except Exception as e:
+        log.error(f"[ORDER][STATUS][ERROR] orderId={order_id} err={e}")
         return None
+
 
 # ==================================================
 # ORDER PLACEMENT (REAL)
@@ -506,11 +511,12 @@ def enter_synthetic(system_id, expiry, spot, qty):
                 ce_sid = sd["ce"]["security_id"]
                 pe_sid = sd["pe"]["security_id"]
 
-                buy_call = place_order_with_checks("BUY", ce_sid, qty, True)
+                buy_call = place_order_with_checks("BUY", ce_sid, qty, False)
                 if not buy_call.get("placed"):
-                    log.error("[ENTER] BUY CALL failed")
+                    log.error("[ENTER] BUY CALL placement failed")
                     return None
-
+                log.info("[ENTER] BUY CALL accepted, proceeding to PUT")
+                
                 sell_put = place_order_with_checks("SELL", pe_sid, qty, False)
                 if not sell_put.get("placed"):
                     log.critical("[ENTER] PUT leg failed after CALL — MANUAL INTERVENTION REQUIRED")
@@ -740,6 +746,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
