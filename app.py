@@ -8,8 +8,7 @@ import logging
 from datetime import datetime, date, timedelta, time as dtime
 from threading import Thread
 
-DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
-DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+
 
 # ==================================================
 # OPTION CHAIN CACHE (RATE LIMIT PROTECTION)
@@ -96,18 +95,28 @@ def remove_system_state(system_id):
 
 SYSTEM_POSITIONS = load_system_positions()
 
+def observe_order_status_async(order_id, tag="", polls=6, interval=1):
+    def _poll():
+        for _ in range(polls):
+            time.sleep(interval)
+            status = get_order_status(order_id)
+            log.info(
+                f"[ORDER][STATUS][OBSERVE][{tag}] "
+                f"orderId={order_id} status={status}"
+            )
+
+    Thread(target=_poll, daemon=True).start()
+
 # ==================================================
 # DHAN AUTH HELPERS
 # ==================================================
 def dhan_headers():
-    cid = os.getenv("DHAN_CLIENT_ID")
-    token = os.getenv("DHAN_ACCESS_TOKEN")
-
     return {
-        "access-token": token,
-        "client-id": cid,          # ✅ THIS IS THE ONLY CLIENT HEADER
+        "access-token": DHAN_ACCESS_TOKEN,
+        "client-id": DHAN_CLIENT_ID,
         "Content-Type": "application/json"
     }
+
    
 def ensure_dhan_auth():
     if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
@@ -164,16 +173,19 @@ def get_order_status(order_id):
         )
 
         if not r.ok:
-            log.error(
-                f"[ORDER][RESPONSE][{r.status_code}] {r.text}"
-            )
+            log.error(f"[ORDER][RESPONSE][{r.status_code}] {r.text}")
             return None
 
-        status = r.json().get("orderStatus")
+        data = r.json()
 
-        # 🔍 THIS IS THE ONLY LINE YOU ARE ADDING
+        if isinstance(data, list) and data:
+            status = data[0].get("orderStatus")
+        elif isinstance(data, dict):
+            status = data.get("orderStatus")
+        else:
+            status = None
+
         log.info(f"[ORDER][STATUS][POLL] orderId={order_id} status={status}")
-
         return status
 
     except Exception as e:
@@ -181,10 +193,11 @@ def get_order_status(order_id):
         return None
 
 
+
 # ==================================================
 # ORDER PLACEMENT (REAL)
 # ==================================================
-def place_order_with_checks(side, security_id, qty, ensure_fill=True):
+def place_order_with_checks(side, security_id, qty):
     try:
         payload = {
             "dhanClientId": 1101700964,   # ❗ NO hardcoding
@@ -239,33 +252,10 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
                 "filled_completely": False
             }
 
-        # ✅ ORDER ACCEPTED — OPTIONAL FILL CONFIRMATION
-        if ensure_fill:
-            for _ in range(5):
-                time.sleep(1)
-                status = get_order_status(order_id)
-                log.info(f"[DEBUG][STATUS][OBSERVE] orderId={order_id} status={status}")
-                if status == "TRADED":
-                    return {
-                        "placed": True,
-                        "filled_completely": True,
-                        "order_id": order_id
-                    }
-                if status in ("REJECTED", "CANCELLED"):
-                    return {
-                        "placed": False,
-                        "filled_completely": False
-                    }
-
-            log.error("[ORDER] Fill timeout")
-            return {
-                "placed": False,
-                "filled_completely": False
-            }
+        
 
         return {
             "placed": True,
-            "filled_completely": False,
             "order_id": order_id
         }
 
@@ -527,17 +517,26 @@ def enter_synthetic(system_id, expiry, spot, qty):
                 ce_sid = sd["ce"]["security_id"]
                 pe_sid = sd["pe"]["security_id"]
 
-                buy_call = place_order_with_checks("BUY", ce_sid, qty, False)
+                buy_call = place_order_with_checks("BUY", ce_sid, qty)
                 if not buy_call.get("placed"):
                     log.error("[ENTER] BUY CALL placement failed")
                     return None
+                if buy_call.get("order_id"):
+                    observe_order_status_async(
+                        buy_call["order_id"],
+                        "CALL_ENTRY"
+                    )
                 log.info("[ENTER] BUY CALL accepted, proceeding to PUT")
                 
-                sell_put = place_order_with_checks("SELL", pe_sid, qty, False)
+                sell_put = place_order_with_checks("SELL", pe_sid, qty)
                 if not sell_put.get("placed"):
                     log.critical("[ENTER] PUT leg failed after CALL — MANUAL INTERVENTION REQUIRED")
                     return None
-                
+                if sell_put.get("order_id"):
+                    observe_order_status_async(
+                        sell_put["order_id"],
+                        "PUT_ENTRY"
+                    )
                 log.info(
                     f"[ENTER][SUCCESS] Strike={strike} "
                     f"CE={ce_sid} PE={pe_sid}"
@@ -603,26 +602,33 @@ def delayed_enter_synthetic(system_id, expiry, spot, qty):
 
 def exit_synthetic(system_id, state):
     qty = state["qty"]
-    exited = False
 
-    # Exit PUT leg if it exists at broker
-    if state.get("put_security_id") and broker_has_position(state["put_security_id"], qty):
+    # Exit PUT first
+    if state.get("put_security_id"):
         log.info(f"[EXIT] Closing PUT {state['put_security_id']}")
-        place_order_with_checks("BUY", state["put_security_id"], qty, True)
-        exited = True
-
-    # Exit CALL leg if it exists at broker
-    if state.get("call_security_id") and broker_has_position(state["call_security_id"], qty):
-        log.info(f"[EXIT] Closing CALL {state['call_security_id']}")
-        place_order_with_checks("SELL", state["call_security_id"], qty, True)
-        exited = True
-
-    # 🔁 RECONCILIATION FIX
-    if not exited:
-        log.warning(
-            f"[EXIT][RECONCILE] No broker position for {system_id} — assuming already closed"
+        put_exit = place_order_with_checks(
+            "BUY",
+            state["put_security_id"],
+            qty
         )
-        return True
+        if put_exit.get("order_id"):
+            observe_order_status_async(
+                put_exit["order_id"],
+                "PUT_EXIT"
+            )
+
+    # Exit CALL
+    log.info(f"[EXIT] Closing CALL {state['call_security_id']}")
+    call_exit = place_order_with_checks(
+        "SELL",
+        state["call_security_id"],
+        qty
+    )
+    if call_exit.get("order_id"):
+        observe_order_status_async(
+            call_exit["order_id"],
+            "CALL_EXIT"
+        )
 
     return True
 
@@ -781,6 +787,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
