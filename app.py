@@ -244,6 +244,7 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             for _ in range(5):
                 time.sleep(1)
                 status = get_order_status(order_id)
+                log.info(f"[DEBUG][STATUS][OBSERVE] orderId={order_id} status={status}")
                 if status == "TRADED":
                     return {
                         "placed": True,
@@ -761,6 +762,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
