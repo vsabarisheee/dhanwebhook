@@ -100,12 +100,11 @@ def observe_order_status_async(order_id, tag="", polls=6, interval=1):
         for _ in range(polls):
             time.sleep(interval)
             status = get_order_status(order_id)
-            log.info(
-                f"[ORDER][STATUS][OBSERVE][{tag}] "
-                f"orderId={order_id} status={status}"
-            )
-
+            log.info(f"[ORDER][STATUS][OBSERVE][{tag}] orderId={order_id} status={status}")
+            if status == "TRADED":
+                break   # ✅ stop early
     Thread(target=_poll, daemon=True).start()
+
 
 # ==================================================
 # DHAN AUTH HELPERS
@@ -799,6 +798,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
