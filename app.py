@@ -697,8 +697,11 @@ def tv_webhook():
     # -------------------------------
     # QTY VALIDATION
     # -------------------------------
-    if qty <= 0 or qty % 75 != 0:
-        return jsonify({"error": "Invalid qty. Must be multiple of 75"}), 400
+    qty = int(data.get("qty", 0))
+
+    if qty <= 0:
+        return jsonify({"error": "Invalid qty. Must be > 0"}), 400
+
 
     # -------------------------------
     # ROLLOVER CHECK
@@ -798,6 +801,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
