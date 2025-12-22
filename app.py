@@ -570,16 +570,35 @@ def enter_synthetic(system_id, expiry, spot, qty):
 def delayed_enter_synthetic(system_id, expiry, spot, qty):
     try:
         log.info(f"[ENTER][ASYNC][START] {system_id}")
+
         state = enter_synthetic(system_id, expiry, spot, qty)
 
         if state:
+            # --------------------------------------------------
+            # ✅ Persist state
+            # --------------------------------------------------
             persist_system_state(system_id, state)
+
+            # --------------------------------------------------
+            # 🔍 Post-persist verification (DEBUG)
+            # --------------------------------------------------
+            log.info(f"[STATE][VERIFY] STATE_FILE exists = {os.path.exists(STATE_FILE)}")
+
+            try:
+                files = os.listdir("/data")
+            except Exception as e:
+                files = f"ERROR: {e}"
+
+            log.info(f"[STATE][VERIFY] Files in /data = {files}")
+
             log.info(f"[ENTER][DONE] {system_id}")
+
         else:
             log.warning(f"[ENTER][SKIPPED] {system_id}")
 
     except Exception as e:
-        log.error(f"[ENTER][ERROR][{system_id}] {e}")
+        log.exception(f"[ENTER][ERROR][{system_id}]")
+
 
 
 def exit_synthetic(system_id, state):
@@ -762,6 +781,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
