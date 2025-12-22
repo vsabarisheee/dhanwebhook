@@ -95,6 +95,17 @@ def dhan_headers():
         "Content-Type": "application/json"
     }
    
+def ensure_dhan_auth():
+    if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
+        log.critical("[AUTH] Missing Dhan credentials")
+        raise RuntimeError("Missing Dhan credentials")
+
+    if len(DHAN_ACCESS_TOKEN) < 50:
+        log.critical("[AUTH] Invalid / expired Dhan access token")
+        raise RuntimeError("Invalid Dhan access token")
+
+    log.info("[AUTH] Dhan credentials present")
+
 
 # ==================================================
 # BROKER POSITIONS (REAL)
@@ -157,7 +168,7 @@ def get_order_status(order_id):
 def place_order_with_checks(side, security_id, qty, ensure_fill=True):
     try:
         payload = {
-            "dhanClientId" : 1101700964,
+            "dhanClientId": 1101700964,   # ❗ NO hardcoding
             "transactionType": side,
             "exchangeSegment": "NSE_FNO",
             "productType": "MARGIN",
@@ -168,41 +179,84 @@ def place_order_with_checks(side, security_id, qty, ensure_fill=True):
             "disclosedQuantity": 0,
             "afterMarketOrder": False
         }
+
         log.error("[ORDER][DEBUG][PAYLOAD] " + json.dumps(payload))
+
         r = requests.post(
             "https://api.dhan.co/v2/orders",
-            headers=dhan_headers(), json=payload
+            headers=dhan_headers(),
+            json=payload,
+            timeout=10
         )
-        if not r.ok:
-            log.error(
-                f"[ORDER][RESPONSE][{r.status_code}] {r.text}"
-            )
+
+        log.error(f"[ORDER][RESPONSE] status={r.status_code} body={r.text}")
+
+        # 🔐 AUTH FAILURE — HARD STOP
+        if r.status_code == 401:
+            log.critical("[AUTH] Dhan token expired or unauthorized — blocking trade")
             return {
                 "placed": False,
+                "filled_completely": False,
+                "reason": "AUTH_FAILED"
+            }
+
+        # ❌ ORDER FAILED
+        if not r.ok:
+            log.error(f"[ORDER][FAILED][{r.status_code}] {r.text}")
+            return {
+                "placed": False,
+                "filled_completely": False,
                 "status_code": r.status_code,
                 "error": r.text
             }
 
-        order_id = r.json().get("orderId")
+        data = r.json()
+        order_id = data.get("orderId")
 
         if not order_id:
-            return {"placed": False}
+            log.error("[ORDER] No orderId returned by Dhan")
+            return {
+                "placed": False,
+                "filled_completely": False
+            }
 
+        # ✅ ORDER ACCEPTED — OPTIONAL FILL CONFIRMATION
         if ensure_fill:
-            # poll until TRADED OR TIMEOUT
             for _ in range(5):
                 time.sleep(1)
                 status = get_order_status(order_id)
                 if status == "TRADED":
-                    return {"placed": True, "filled_completely": True}
+                    return {
+                        "placed": True,
+                        "filled_completely": True,
+                        "order_id": order_id
+                    }
                 if status in ("REJECTED", "CANCELLED"):
-                    return {"placed": False}
-            return {"placed": False}
-        return {"placed": True, "filled_completely": False}
+                    return {
+                        "placed": False,
+                        "filled_completely": False
+                    }
+
+            log.error("[ORDER] Fill timeout")
+            return {
+                "placed": False,
+                "filled_completely": False
+            }
+
+        return {
+            "placed": True,
+            "filled_completely": False,
+            "order_id": order_id
+        }
 
     except Exception as e:
-        log.error(f"[ORDER][ERROR] {e}")
-        return {"placed": False}
+        log.exception("[ORDER][EXCEPTION]")
+        return {
+            "placed": False,
+            "filled_completely": False,
+            "exception": str(e)
+        }
+
 
 # ==================================================
 # OPTION EXPIRY LIST (OFFICIAL DHAN API)
@@ -378,7 +432,8 @@ def spread_ok(sd):
 
 
 def enter_synthetic(system_id, expiry, spot, qty):
-       
+
+    ensure_dhan_auth()
     start_time = time.time()
     base_strike = round(spot / 100) * 100
 
@@ -681,6 +736,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
