@@ -8,6 +8,9 @@ import logging
 from datetime import datetime, date, timedelta, time as dtime
 from threading import Thread
 
+DHAN_CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
+DHAN_ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+
 # ==================================================
 # OPTION CHAIN CACHE (RATE LIMIT PROTECTION)
 # ==================================================
@@ -84,10 +87,6 @@ SYSTEM_POSITIONS = load_system_positions()
 def dhan_headers():
     cid = os.getenv("DHAN_CLIENT_ID")
     token = os.getenv("DHAN_ACCESS_TOKEN")
-
-    log.error(
-        f"[AUTH][DEBUG] CLIENT_ID={cid} TOKEN={token[:10]}..."
-    )
 
     return {
         "access-token": token,
@@ -513,7 +512,10 @@ def enter_synthetic(system_id, expiry, spot, qty):
                     return None
 
                 sell_put = place_order_with_checks("SELL", pe_sid, qty, False)
-
+                if not sell_put.get("placed"):
+                    log.critical("[ENTER] PUT leg failed after CALL — MANUAL INTERVENTION REQUIRED")
+                    return None
+                
                 log.info(
                     f"[ENTER][SUCCESS] Strike={strike} "
                     f"CE={ce_sid} PE={pe_sid}"
@@ -562,13 +564,15 @@ def exit_synthetic(system_id, state):
     qty = state["qty"]
     exited = False
 
-    # Exit PUT leg first (if exists)
+    # Exit PUT leg if it exists at broker
     if state.get("put_security_id") and broker_has_position(state["put_security_id"], qty):
+        log.info(f"[EXIT] Closing PUT {state['put_security_id']}")
         place_order_with_checks("BUY", state["put_security_id"], qty, True)
         exited = True
 
-    # Exit CALL leg
-    if broker_has_position(state["call_security_id"], qty):
+    # Exit CALL leg if it exists at broker
+    if state.get("call_security_id") and broker_has_position(state["call_security_id"], qty):
+        log.info(f"[EXIT] Closing CALL {state['call_security_id']}")
         place_order_with_checks("SELL", state["call_security_id"], qty, True)
         exited = True
 
@@ -736,6 +740,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
