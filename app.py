@@ -111,23 +111,35 @@ def observe_order_status_async(order_id, tag="", polls=6, interval=1):
 # DHAN AUTH HELPERS
 # ==================================================
 def dhan_headers():
+    cid = os.getenv("DHAN_CLIENT_ID")
+    token = os.getenv("DHAN_ACCESS_TOKEN")
+
+    if not cid or not token:
+        log.critical("[AUTH] Missing Dhan credentials in environment")
+        raise RuntimeError("Missing Dhan credentials")
+
     return {
-        "access-token": DHAN_ACCESS_TOKEN,
-        "client-id": DHAN_CLIENT_ID,
+        "access-token": token,
+        "client-id": cid,
         "Content-Type": "application/json"
     }
 
+
    
 def ensure_dhan_auth():
-    if not DHAN_CLIENT_ID or not DHAN_ACCESS_TOKEN:
+    cid = os.getenv("DHAN_CLIENT_ID")
+    token = os.getenv("DHAN_ACCESS_TOKEN")
+
+    if not cid or not token:
         log.critical("[AUTH] Missing Dhan credentials")
         raise RuntimeError("Missing Dhan credentials")
 
-    if len(DHAN_ACCESS_TOKEN) < 50:
+    if len(token) < 50:
         log.critical("[AUTH] Invalid / expired Dhan access token")
         raise RuntimeError("Invalid Dhan access token")
 
     log.info("[AUTH] Dhan credentials present")
+
 
 
 # ==================================================
@@ -787,6 +799,7 @@ def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
